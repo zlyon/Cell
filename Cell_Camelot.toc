@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: Cell
-## Version: r277.9.9.5-forever
+## Version: r277.9.9.6-forever
 ## Author: enderneko, Krysio, NeRgY
 ## SavedVariables: CellDB, CellDBBackup, URFDB
 ## LoadSavedVariablesFirst: 1

@@ -2193,9 +2193,32 @@ local function ShowIndicatorSettings(id)
 
     local notifiedLayout = F.GetNotifiedLayoutName(currentLayout)
     local indicatorTable = currentLayoutTable["indicators"][id]
+    if not indicatorTable then return end -- stale selection guard
+
     local indicatorName = indicatorTable["indicatorName"]
     local indicatorType = indicatorTable["type"]
     -- texplore(indicatorTable)
+
+    --! Forever: fill MISSING fields only, from the built-in defaults. Old saves (users
+    --! who had a previous Cell/CellForever install writing the same CellDB) can lack keys
+    --! like "position"/"font"/"colors"; the matching settings widget then throws in
+    --! SetDBValue and silently aborts the loop below, leaving the settings pane blank.
+    --! Existing values are NEVER touched -- a complete save triggers nothing here.
+    if indicatorType == "built-in" and indicatorName then
+        local defIdx = Cell.defaults.indicatorIndices and Cell.defaults.indicatorIndices[indicatorName]
+        local defIndicator = defIdx and Cell.defaults.layout and Cell.defaults.layout["indicators"][defIdx]
+        if defIndicator then
+            for k, v in pairs(defIndicator) do
+                if indicatorTable[k] == nil and k ~= "enabled" then
+                    if type(v) == "table" then
+                        indicatorTable[k] = F.Copy(v)
+                    else
+                        indicatorTable[k] = v
+                    end
+                end
+            end
+        end
+    end
 
     if indicatorType == "color" then
         F.BD(previewButton).widgets.healthBar:SetValue(0.5)
@@ -2386,6 +2409,10 @@ local function ShowIndicatorSettings(id)
 
         local currentSetting = settingsTable[i]
 
+        --! Forever: display-only safety net (writes nothing). If SetDBValue still throws
+        --! (e.g. a field exists with a wrong type on very old saves), hide that one widget
+        --! and keep building the rest instead of blanking the whole pane.
+        local widgetOK, widgetErr = pcall(function()
         --! convert currentSetting to ACTUAL TABLE INDEX
         if currentSetting == "color-alpha" or currentSetting == "color-class" or currentSetting == "color-power" then currentSetting = "color" end
         if currentSetting == "customColors" or currentSetting == "overlayColors" or currentSetting == "blockColors" or currentSetting == "rectColors" or currentSetting == "colors-static" then currentSetting = "colors" end
@@ -2904,6 +2931,11 @@ local function ShowIndicatorSettings(id)
                 end
                 Cell.Fire("UpdateIndicators", notifiedLayout, indicatorName, currentSetting, indicatorTable[currentSetting])
             end)
+        end
+        end)
+        if not widgetOK then
+            w:Hide()
+            F.Debug("IndicatorSettings widget failed:", currentSetting, widgetErr)
         end
     end
 
