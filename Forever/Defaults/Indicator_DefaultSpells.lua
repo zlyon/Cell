@@ -1399,9 +1399,12 @@ function F.PromptHealersIndicator(parent, opts)
             if opts.printIfUpToDate then
                 F.Print(L["Healers indicator is up to date."])
             end
-            return
+            return false -- already up to date: caller may treat this as "prompt handled"
         end
-        return Cell.CreateConfirmPopup(parent, opts.width or 200,
+        --! CreateConfirmPopup ends with ClearAllPoints + Show but no SetPoint -- anchor it to
+        --! the parent's top-left ourselves, or the per-version update prompt pops up at an
+        --! unanchored spot users never notice (FirstRun anchors its own copy the same way).
+        local popup = Cell.CreateConfirmPopup(parent, opts.width or 200,
             string.format(L["Healers indicator already exists. Add new spells?"], #missing) .. BuildHealersSpellIcons(missing),
             function()
                 for _, id in ipairs(missing) do
@@ -1411,6 +1414,8 @@ function F.PromptHealersIndicator(parent, opts)
                 F.ReloadIndicatorList()
                 if opts.onDone then opts.onDone() end
             end, opts.onReject, opts.mask, nil, nil, opts.key)
+        popup:SetPoint("TOPLEFT")
+        return popup
     end
 
     -- opts.existingOnly: don't offer creating the indicator (used by the per-version update prompt)

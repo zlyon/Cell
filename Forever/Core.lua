@@ -1083,12 +1083,20 @@ function eventFrame:PLAYER_ENTERING_WORLD(isInitialLogin, isReloadingUi)
     -- to add newly-added default spells to their Healers indicator.
     -- Fresh installs are skipped: FirstRun() above already offers the full list.
     if Cell.version and CellDB["healersPromptVersion"] ~= Cell.version then
-        CellDB["healersPromptVersion"] = Cell.version
-        if not CellDB["firstRun"] then
-            F.PromptHealersIndicator(Cell.frames.anchorFrame, {
+        if CellDB["firstRun"] then
+            CellDB["healersPromptVersion"] = Cell.version
+        else
+            --! Only mark the version as prompted when the popup actually came up
+            --! (popup / false = up-to-date). If PromptHealersIndicator bailed out early
+            --! (nil, e.g. layout table not ready yet), retry on the next login instead
+            --! of silently consuming this version's one-shot prompt.
+            local popup = F.PromptHealersIndicator(Cell.frames.anchorFrame, {
                 printIfUpToDate = true,
                 existingOnly = true,
             })
+            if popup ~= nil then
+                CellDB["healersPromptVersion"] = Cell.version
+            end
         end
     end
 end
