@@ -367,7 +367,7 @@ if not GetSpecializationInfoByID then
     end
 end
 
-local CELL_VERSION_FALLBACK = "r277.9.9.4-forever"
+local CELL_VERSION_FALLBACK = "r277.9.9.5-forever"
 
 function F.InitAddonVersion()
     local getMeta = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata

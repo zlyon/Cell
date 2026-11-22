@@ -372,15 +372,29 @@ function eventFrame:ADDON_LOADED(arg1)
         end
 
         -- tools ----------------------------------------------------------------------------------
+        -- NOTE: a save written by another Cell build can carry a *partial* tools table, so the
+        -- old whole-table check let it through and BattleRes/RaidTools then errored on a nil
+        -- field (e.g. ["battleResTimer"]). Fill in per key instead of only when tools is missing.
         if type(CellDB["tools"]) ~= "table" then
-            CellDB["tools"] = {
-                ["battleResTimer"] = {true, false, {}},
-                ["buffTracker"] = {false, "left-to-right", 32, {}, {}},
-                ["deathReport"] = {false, 10},
-                ["readyAndPull"] = {false, "text_button", {"default", 7}, {}},
-                ["marks"] = {false, false, "both_h", {}},
-                ["fadeOut"] = false,
-            }
+            CellDB["tools"] = {}
+        end
+        if type(CellDB["tools"]["battleResTimer"]) ~= "table" then
+            CellDB["tools"]["battleResTimer"] = {true, false, {}}
+        end
+        if type(CellDB["tools"]["buffTracker"]) ~= "table" then
+            CellDB["tools"]["buffTracker"] = {false, "left-to-right", 32, {}, {}}
+        end
+        if type(CellDB["tools"]["deathReport"]) ~= "table" then
+            CellDB["tools"]["deathReport"] = {false, 10}
+        end
+        if type(CellDB["tools"]["readyAndPull"]) ~= "table" then
+            CellDB["tools"]["readyAndPull"] = {false, "text_button", {"default", 7}, {}}
+        end
+        if type(CellDB["tools"]["marks"]) ~= "table" then
+            CellDB["tools"]["marks"] = {false, false, "both_h", {}}
+        end
+        if CellDB["tools"]["fadeOut"] == nil then
+            CellDB["tools"]["fadeOut"] = false
         end
 
         -- spellRequest ---------------------------------------------------------------------------
@@ -610,7 +624,11 @@ function eventFrame:ADDON_LOADED(arg1)
         Cell.vars.bigDebuffs = F.ConvertTable(CellDB["bigDebuffs"])
 
         -- debuffTypeColor ------------------------------------------------------------------------
-        if type(CellDB["debuffTypeColor"]) ~= "table" then
+        -- Not just "is it a table": a leftover empty {} (e.g. from the old CVar-backup/seed
+        -- workaround days, before SavedVariables reliably loaded on this client) would pass a
+        -- bare type check forever and never get repaired, leaving every dispel-type border
+        -- black (I.GetDebuffTypeColor falls through to 0,0,0 when the key it looks up is missing).
+        if type(CellDB["debuffTypeColor"]) ~= "table" or not CellDB["debuffTypeColor"]["Curse"] then
             I.ResetDebuffTypeColor()
         end
 
@@ -663,6 +681,8 @@ function eventFrame:ADDON_LOADED(arg1)
         if type(CellDB["targetedSpellsList"]) ~= "table" then
             CellDB["targetedSpellsList"] = I.GetDefaultTargetedSpellsList()
         end
+        -- Forever: feature disabled; also purge a list saved earlier with modern-only IDs.
+        CellDB["targetedSpellsList"] = {}
         Cell.vars.targetedSpellsList = F.ConvertTable(CellDB["targetedSpellsList"])
 
         if type(CellDB["targetedSpellsGlow"]) ~= "table" then
@@ -1029,6 +1049,19 @@ function eventFrame:PLAYER_ENTERING_WORLD(isInitialLogin, isReloadingUi)
     if CellDB["firstRun"] then
         F.FirstRun()
     end
+
+    -- r277.9.9.5: after a version update, once per version, prompt existing users
+    -- to add newly-added default spells to their Healers indicator.
+    -- Fresh installs are skipped: FirstRun() above already offers the full list.
+    if Cell.version and CellDB["healersPromptVersion"] ~= Cell.version then
+        CellDB["healersPromptVersion"] = Cell.version
+        if not CellDB["firstRun"] then
+            F.PromptHealersIndicator(Cell.frames.anchorFrame, {
+                printIfUpToDate = true,
+                existingOnly = true,
+            })
+        end
+    end
 end
 
 -- Second, independent trigger for the same instanceType correction as RecheckInstanceType.
@@ -1066,13 +1099,96 @@ end
 --     end)
 -- end
 
+local specRetries = 0
 local function UpdateSpecVars()
-    Cell.vars.playerSpecID, Cell.vars.playerSpecName, _, Cell.vars.playerSpecIcon, Cell.vars.playerSpecRole = GetSpecializationInfo(GetSpecialization())
+    -- Forever has no specialization of its own: Utils.lua rebuilds the three classic specs per class
+    -- and works out the current one from the points spent in each talent-tree column. That read is
+    -- not available on the first frames after login, so retry instead of overwriting a good value
+    -- with "no spec" (and, worse, seeding a click-casting profile under the wrong spec).
+    local index = GetSpecialization()
+    if not index then
+        Cell.vars.playerSpecID = Cell.vars.playerSpecID or 0
+        Cell.vars.playerSpecName = Cell.vars.playerSpecName or L["No Spec"]
+        Cell.vars.playerSpecIcon = Cell.vars.playerSpecIcon or 134400
+        if not Cell.vars.playerSpecRole or Cell.vars.playerSpecRole == "NONE" then
+            Cell.vars.playerSpecRole = "DAMAGER"
+        end
+        if specRetries < 10 then
+            specRetries = specRetries + 1
+            if F.MarkSpecDirty then F.MarkSpecDirty() end
+            C_Timer.After(1.5, UpdateSpecVars)
+        end
+        return
+    end
+    specRetries = 0
+
+    Cell.vars.playerSpecID, Cell.vars.playerSpecName, _, Cell.vars.playerSpecIcon, Cell.vars.playerSpecRole = GetSpecializationInfo(index)
+
+    if not Cell.vars.playerSpecRole or Cell.vars.playerSpecRole == "NONE" then
+        local groupRole = UnitGroupRolesAssigned("player")
+        Cell.vars.playerSpecRole = (groupRole ~= "NONE" and groupRole) or "DAMAGER"
+    end
+    -- playerSpecID is also used as a DB table key all over (QuickCast/QuickAssist/
+    -- ClickCastings per-spec profiles) -- a nil key would crash those writes, so give
+    -- it a stable placeholder value instead of leaving it nil.
+    if not Cell.vars.playerSpecID then
+        Cell.vars.playerSpecID = 0
+    end
     if not Cell.vars.playerSpecName or Cell.vars.playerSpecName == "" then
         Cell.vars.playerSpecName = L["No Spec"]
         Cell.vars.playerSpecIcon = 134400
     end
+
+    -- Saves made while the getters reported no spec have no click-casting profile for this spec;
+    -- seed it from "common" so "use a profile per spec" is not empty on first switch.
+    local classDB = CellDB and CellDB["clickCastings"] and CellDB["clickCastings"][Cell.vars.playerClass]
+    if classDB and type(classDB["common"]) == "table" and Cell.vars.playerSpecID ~= 0
+        and type(classDB[Cell.vars.playerSpecID]) ~= "table" then
+        classDB[Cell.vars.playerSpecID] = F.Copy(classDB["common"])
+        if type(classDB["alwaysTargeting"]) ~= "table" then classDB["alwaysTargeting"] = {} end
+        if classDB["alwaysTargeting"][Cell.vars.playerSpecID] == nil then
+            classDB["alwaysTargeting"][Cell.vars.playerSpecID] = "disabled"
+        end
+    end
 end
+
+-------------------------------------------------
+-- talent tree -> specialization
+-------------------------------------------------
+-- The three classic trees all live inside one trait tree here, so spending points can change which
+-- spec the player effectively is. Re-derive on every talent change and let the per-spec features
+-- (click-castings, auto-switch layouts, ...) follow, the same way a real spec switch would.
+local specWatchFrame = CreateFrame("Frame")
+specWatchFrame:SetScript("OnEvent", function()
+    if not CellDB or not CellDB["clickCastings"] or not Cell.vars.playerClass then return end
+    if InCombatLockdown() then
+        specWatchFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        return
+    end
+    specWatchFrame:UnregisterEvent("PLAYER_REGEN_ENABLED")
+
+    if F.MarkSpecDirty then F.MarkSpecDirty() end
+    local oldID, oldRole = Cell.vars.playerSpecID, Cell.vars.playerSpecRole
+    UpdateSpecVars()
+    if Cell.vars.playerSpecID == oldID and Cell.vars.playerSpecRole == oldRole then return end
+
+    if not CellDB["clickCastings"][Cell.vars.playerClass]["useCommon"] then
+        Cell.Fire("UpdateClickCastings")
+    end
+    -- SpecChanged makes Core re-apply the auto-switch layout, and that path indexes by
+    -- Cell.vars.groupType. Early in the login that is not known yet (it is set on
+    -- GROUP_ROSTER_UPDATE), and firing then crashes UnitButton's layout cache with a nil key --
+    -- so stay quiet until it exists; the login sequence applies the layout right after anyway.
+    if Cell.vars.groupType then
+        F.Debug("|cffffbb77SpecChanged:|r", Cell.vars.playerSpecID, Cell.vars.playerSpecRole)
+        Cell.Fire("SpecChanged", Cell.vars.playerSpecID, Cell.vars.playerSpecRole)
+    end
+end)
+specWatchFrame:RegisterEvent("PLAYER_TALENT_UPDATE")
+specWatchFrame:RegisterEvent("TRAIT_CONFIG_UPDATED")
+specWatchFrame:RegisterEvent("ACTIVE_COMBAT_CONFIG_CHANGED")
+specWatchFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+specWatchFrame:RegisterEvent("PLAYER_LEVEL_UP")
 
 function eventFrame:PLAYER_LOGIN()
     F.Debug("|cffbbbbbb=== PLAYER_LOGIN ===")

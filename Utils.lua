@@ -13,16 +13,361 @@ Cell.vars.playerFaction = UnitFactionGroup("player")
 -------------------------------------------------
 Cell.isAsian = LOCALE_zhCN or LOCALE_zhTW or LOCALE_koKR
 
-Cell.isRetail = WOW_PROJECT_ID == WOW_PROJECT_MAINLINE
-Cell.isMidnight = Cell.isRetail and (select(4, GetBuildInfo()) >= 120000)
-Cell.isVanilla = WOW_PROJECT_ID == WOW_PROJECT_CLASSIC
-Cell.isTBC = WOW_PROJECT_ID == WOW_PROJECT_BURNING_CRUSADE_CLASSIC
-Cell.isWrath = WOW_PROJECT_ID == WOW_PROJECT_WRATH_CLASSIC
-Cell.isCata = WOW_PROJECT_ID == WOW_PROJECT_CATACLYSM_CLASSIC
-Cell.isMists = WOW_PROJECT_ID == WOW_PROJECT_MISTS_CLASSIC
+-- Forever-only build: Mainline API with Secret Values active but a low interface number, so isMidnight drops its build-number gate.
+Cell.isForever = true
+-- Secure snippets were assumed broken on Forever because loadstring_untainted (the global this
+-- used to check for) is nil there -- confirmed live 2026-09-27 that assumption was wrong: the
+-- secure-snippet compiler itself works fine (manually triggering Cell's own OnEnter snippet plus
+-- a modifier-click bind on the Solo frame produced no errors and cast correctly). loadstring_untainted
+-- going missing just doesn't mean what this used to assume.
+Cell.snippetsOK = true
+
+-- Forever's art set predates some modern icon file IDs (green squares); map them to classic-era stand-ins.
+local FOREVER_ICON = {
+    [4630367] = 136114, -- Skyfury -> Windfury
+    [4622448] = 134400, -- Blessing of the Bronze -> question mark
+    [1723997] = 134400, -- Mass Barrier (generic) -> question mark
+}
+function F.ClientIcon(icon)
+    return FOREVER_ICON[icon] or icon
+end
+-- This file only ever loads on Forever, which is Mainline-API based. Its WOW_PROJECT_ID changed
+-- with a client update (no longer equals WOW_PROJECT_MAINLINE), so the flavor flags are fixed
+-- here instead of derived from it.
+Cell.isRetail = true
+Cell.isMidnight = true
+Cell.isVanilla = false
+Cell.isTBC = false
+Cell.isWrath = false
+Cell.isCata = false
+Cell.isMists = false
 Cell.isTWW = LE_EXPANSION_LEVEL_CURRENT == LE_EXPANSION_WAR_WITHIN
 
-local CELL_VERSION_FALLBACK = "r277.9.8.5"
+-------------------------------------------------
+-- specializations
+-------------------------------------------------
+-- Forever ships no specialization API: the client reports exactly one pseudo-spec per class
+-- (named after the class) and crams the three classic talent trees into a single trait tree of
+-- ~51 nodes laid out as three columns, with no subTreeIDs. So derive the spec from where the
+-- talent points actually went -- per-spec features (click-castings, auto-switch layouts) then get
+-- real buckets instead of one class-wide bucket. The spec IDs are the retail ones, used purely as
+-- stable keys: the client itself has no data for them.
+local CSI = C_SpecializationInfo
+
+-- Per class, in talent-tree order (left column first): spec ID, name, icon, role.
+local SPECS = {
+    DRUID = {
+        {102, "平衡", "Interface\\Icons\\spell_nature_starfall", "DAMAGER"},
+        {103, "野性战斗", "Interface\\Icons\\ability_racial_bearform", "DAMAGER"},
+        {105, "恢复", "Interface\\Icons\\spell_nature_healingtouch", "HEALER"},
+    },
+    HUNTER = {
+        {253, "野兽控制", "Interface\\Icons\\ability_hunter_beasttaming", "DAMAGER"},
+        {254, "射击", "Interface\\Icons\\ability_marksmanship", "DAMAGER"},
+        {255, "生存", "Interface\\Icons\\ability_hunter_swiftstrike", "DAMAGER"},
+    },
+    MAGE = {
+        {62, "奥术", "Interface\\Icons\\spell_holy_magicalsentry", "DAMAGER"},
+        {63, "火焰", "Interface\\Icons\\spell_fire_firebolt02", "DAMAGER"},
+        {64, "冰霜", "Interface\\Icons\\spell_frost_frostbolt02", "DAMAGER"},
+    },
+    PALADIN = {
+        {65, "神圣", "Interface\\Icons\\spell_holy_holybolt", "HEALER"},
+        {66, "防护", "Interface\\Icons\\spell_holy_devotionaura", "TANK"},
+        {70, "惩戒", "Interface\\Icons\\spell_holy_auraoflight", "DAMAGER"},
+    },
+    PRIEST = {
+        {256, "戒律", "Interface\\Icons\\spell_holy_wordfortitude", "HEALER"},
+        {257, "神圣", "Interface\\Icons\\spell_holy_guardianspirit", "HEALER"},
+        {258, "暗影魔法", "Interface\\Icons\\spell_shadow_shadowwordpain", "DAMAGER"},
+    },
+    ROGUE = {
+        {259, "奇袭", "Interface\\Icons\\ability_rogue_eviscerate", "DAMAGER"},
+        {260, "战斗", "Interface\\Icons\\ability_backstab", "DAMAGER"},
+        {261, "敏锐", "Interface\\Icons\\ability_stealth", "DAMAGER"},
+    },
+    SHAMAN = {
+        {262, "元素战斗", "Interface\\Icons\\spell_nature_lightning", "DAMAGER"},
+        {263, "增强", "Interface\\Icons\\spell_nature_lightningshield", "DAMAGER"},
+        {264, "恢复", "Interface\\Icons\\spell_nature_magicimmunity", "HEALER"},
+    },
+    WARLOCK = {
+        {265, "痛苦", "Interface\\Icons\\spell_shadow_deathcoil", "DAMAGER"},
+        {266, "恶魔学识", "Interface\\Icons\\spell_shadow_metamorphosis", "DAMAGER"},
+        {267, "毁灭", "Interface\\Icons\\spell_shadow_rainoffire", "DAMAGER"},
+    },
+    WARRIOR = {
+        {71, "武器", "Interface\\Icons\\ability_warrior_savageblow", "DAMAGER"},
+        {72, "狂怒", "Interface\\Icons\\ability_warrior_innerrage", "DAMAGER"},
+        {73, "防护", "Interface\\Icons\\inv_shield_06", "TANK"},
+    },
+}
+
+local CLASS_BY_ID = {
+    [1]  = "WARRIOR", [2]  = "PALADIN", [3]  = "HUNTER",  [4]  = "ROGUE", [5]  = "PRIEST",
+    [7]  = "SHAMAN",  [8]  = "MAGE",    [9]  = "WARLOCK", [11] = "DRUID",
+}
+
+local specState = {dirty = true, configID = nil, index = nil}
+
+-- Called by Core.lua whenever the talents or the active talent config may have changed.
+function F.MarkSpecDirty()
+    specState.dirty = true
+end
+
+function F.GetSpecList()
+    return SPECS[Cell.vars.playerClass]
+end
+
+-- Same list for any class, keyed by class token ("PALADIN"), not by class ID.
+function F.GetSpecListForClass(class)
+    return SPECS[class]
+end
+
+local function ClientSpecIndex()
+    local f = CSI and CSI.GetSpecialization
+    local index = f and f()
+    return type(index) == "number" and index > 0 and index or nil
+end
+
+-- Points spent per talent tree, straight from the client's own group metadata: the three columns of
+-- the merged tree are exposed as trait node groups, ordered left to right (holy / prot / ret).
+local function DetectIndexByGroup(configID, treeCount)
+    local TR = C_Traits
+    if not (TR and TR.GetConfigInfo and TR.GetGroupDisplayInfoByTreeID and TR.GetGroupCurrencyInfo) then
+        return nil
+    end
+    local info = TR.GetConfigInfo(configID)
+    if type(info) ~= "table" or type(info.treeIDs) ~= "table" then return nil end
+
+    local groups, seen = {}, {}
+    for _, treeID in ipairs(info.treeIDs) do
+        local displays = TR.GetGroupDisplayInfoByTreeID(treeID)
+        for _, display in ipairs(type(displays) == "table" and displays or {}) do
+            if display.groupID and not seen[display.groupID] then
+                seen[display.groupID] = true
+                groups[#groups + 1] = display
+            end
+        end
+    end
+    if #groups < 2 or #groups > treeCount then return nil end
+    table.sort(groups, function(a, b)
+        local oa, ob = tonumber(a.orderIndex) or 0, tonumber(b.orderIndex) or 0
+        if oa == ob then return a.groupID < b.groupID end
+        return oa < ob
+    end)
+
+    local groupIDs = {}
+    for index, group in ipairs(groups) do groupIDs[index] = group.groupID end
+    local spent = {}
+    local currencyInfos = TR.GetGroupCurrencyInfo(configID, groupIDs)
+    for _, groupInfo in ipairs(type(currencyInfos) == "table" and currencyInfos or {}) do
+        local currency = groupInfo.currencyInfos and groupInfo.currencyInfos[1]
+        spent[groupInfo.traitNodeGroupID] = currency and tonumber(currency.spent) or 0
+    end
+
+    local best, bestSpent = nil, 0
+    for index, group in ipairs(groups) do
+        local value = spent[group.groupID] or 0
+        if value > bestSpent then best, bestSpent = index, value end
+    end
+    return best, bestSpent
+end
+
+-- Fallback when the group API is unavailable: sum the purchased ranks per column. Every node sits on
+-- a wide pixel grid, so the tree boundaries are simply the widest X gaps; gaps inside one column (the
+-- column pitch) are much smaller. Bail out rather than guess when that does not hold.
+local function DetectIndexByGeometry(configID, treeCount)
+    local TR = C_Traits
+    if not (TR and TR.GetConfigInfo and TR.GetTreeNodes and TR.GetNodeInfo) then return nil end
+    local info = TR.GetConfigInfo(configID)
+    local treeID = type(info) == "table" and type(info.treeIDs) == "table" and info.treeIDs[1]
+    if not treeID then return nil end
+    local nodes = TR.GetTreeNodes(treeID)
+    if type(nodes) ~= "table" or #nodes < treeCount * 2 then return nil end
+
+    local cols = {}
+    for _, nodeID in ipairs(nodes) do
+        local node = TR.GetNodeInfo(configID, nodeID)
+        if type(node) == "table" then
+            local x = tonumber(node.posX)
+            if x then
+                cols[#cols + 1] = {x = x, spent = tonumber(node.ranksPurchased) or 0}
+            end
+        end
+    end
+    if #cols < treeCount * 2 then return nil end
+    table.sort(cols, function(a, b) return a.x < b.x end)
+
+    local gaps = {}
+    for i = 2, #cols do
+        local size = cols[i].x - cols[i - 1].x
+        if size > 0 then gaps[#gaps + 1] = {at = i, size = size} end
+    end
+    if #gaps < treeCount - 1 then return nil end
+    table.sort(gaps, function(a, b) return a.size > b.size end)
+    local pitch = gaps[math.ceil(#gaps / 2)].size
+    local cuts = {}
+    for i = 1, treeCount - 1 do
+        if gaps[i].size < pitch * 1.5 then return nil end
+        cuts[#cuts + 1] = gaps[i].at
+    end
+    table.sort(cuts)
+
+    local from, best, bestSpent = 1, nil, 0
+    for tree = 1, treeCount do
+        local to = cuts[tree] and cuts[tree] - 1 or #cols
+        local value = 0
+        for i = from, to do value = value + cols[i].spent end
+        if value > bestSpent then best, bestSpent = tree, value end
+        from = to + 1
+    end
+    return best, bestSpent
+end
+
+local function DetectIndex(configID, treeCount)
+    local ok, index, spent = pcall(DetectIndexByGroup, configID, treeCount)
+    if ok and index then return index, spent end
+    ok, index, spent = pcall(DetectIndexByGeometry, configID, treeCount)
+    if ok then return index, spent end
+    return nil
+end
+
+-- 1-based index into the class spec list, or nil while the tree cannot be read yet (before login).
+function F.GetSpecIndex()
+    local specs = SPECS[Cell.vars.playerClass]
+    if not specs then return nil end
+    local CT = C_ClassTalents
+    local configID = CT and CT.GetActiveConfigID and CT.GetActiveConfigID()
+    if type(configID) ~= "number" then return specState.index end
+    if not specState.dirty and specState.configID == configID and specState.index then
+        return specState.index
+    end
+    specState.dirty, specState.configID = false, configID
+    local ok, index = pcall(DetectIndex, configID, #specs)
+    if ok and index then specState.index = index end
+    return specState.index
+end
+
+-- Forward the missing globals to the synthetic specs above. Classes without a synthetic list keep
+-- using the client's own getters; classes in SPECS deliberately do NOT fall back to the client's
+-- pseudo-spec (its ID is bogus and would silently put everyone in the first tree), they report
+-- "unknown" until the talent config is readable -- Core.lua retries a few times at login.
+local function SpecFor(specs, index)
+    if not specs or type(index) ~= "number" or index <= 0 then return nil end
+    return specs[index]
+end
+
+if not GetSpecialization then
+    function GetSpecialization()
+        if SPECS[Cell.vars.playerClass] then return F.GetSpecIndex() end
+        return ClientSpecIndex()
+    end
+end
+if not GetSpecializationInfo then
+    function GetSpecializationInfo(index)
+        local specs = SPECS[Cell.vars.playerClass]
+        if specs then
+            local spec = SpecFor(specs, index) or SpecFor(specs, F.GetSpecIndex())
+            if spec then return spec[1], spec[2], "", spec[3], spec[4] end
+            return nil
+        end
+        local f = CSI and CSI.GetSpecializationInfo
+        if not f then return nil end
+        if type(index) ~= "number" or index <= 0 then index = ClientSpecIndex() end
+        if type(index) ~= "number" or index <= 0 then return nil end
+        return f(index)
+    end
+end
+if not GetSpecializationRole then
+    function GetSpecializationRole(index)
+        local specs = SPECS[Cell.vars.playerClass]
+        if specs then
+            local spec = SpecFor(specs, index) or SpecFor(specs, F.GetSpecIndex())
+            return spec and spec[4] or nil
+        end
+        local f = CSI and CSI.GetSpecializationInfo
+        if not f then return nil end
+        if type(index) ~= "number" or index <= 0 then index = ClientSpecIndex() end
+        if type(index) ~= "number" or index <= 0 then return nil end
+        return select(5, f(index))
+    end
+end
+if not GetActiveSpecGroup then
+    function GetActiveSpecGroup()
+        local f = CSI and CSI.GetActiveSpecGroup
+        return f and f()
+    end
+end
+if not GetNumSpecializations then
+    function GetNumSpecializations()
+        local specs = SPECS[Cell.vars.playerClass]
+        if specs then return #specs end
+        return ClientSpecIndex() and 1 or 0
+    end
+end
+-- Blizzard FrameXML global missing on Forever; LibCustomGlow's button glow calls it every frame.
+if not AnimateTexCoords then
+    function AnimateTexCoords(texture, textureWidth, textureHeight, frameWidth, frameHeight, numFrames, elapsed, throttle)
+        if not texture.frame then
+            texture.frame = 1
+            texture.throttle = throttle
+            texture.numColumns = floor(textureWidth / frameWidth)
+            texture.numRows = floor(textureHeight / frameHeight)
+            texture.columnWidth = frameWidth / textureWidth
+            texture.rowHeight = frameHeight / textureHeight
+        end
+        local frame = texture.frame
+        if not texture.throttle or texture.throttle > throttle then
+            local framesToAdvance = floor(texture.throttle / throttle)
+            while frame + framesToAdvance > numFrames do
+                frame = frame - numFrames
+            end
+            frame = frame + framesToAdvance
+            texture.throttle = 0
+            local left = ((frame - 1) % texture.numColumns) * texture.columnWidth
+            local right = left + texture.columnWidth
+            local bottom = ceil(frame / texture.numColumns) * texture.rowHeight
+            local top = bottom - texture.rowHeight
+            texture:SetTexCoord(left, right, top, bottom)
+            texture.frame = frame
+        else
+            texture.throttle = texture.throttle + elapsed
+        end
+    end
+end
+if not GetNumSpecializationsForClassID then
+    function GetNumSpecializationsForClassID(classID)
+        local specs = SPECS[CLASS_BY_ID[classID] or ""]
+        return specs and #specs or 0
+    end
+end
+if not GetSpecializationInfoForClassID then
+    function GetSpecializationInfoForClassID(classID, index)
+        local spec = SpecFor(SPECS[CLASS_BY_ID[classID] or ""], index)
+        if spec then return spec[1], spec[2], "", spec[3], spec[4] end
+        return nil
+    end
+end
+if not GetSpecializationInfoByID then
+    function GetSpecializationInfoByID(specID)
+        if type(specID) ~= "number" then return nil end
+        for _, specs in pairs(SPECS) do
+            for _, spec in ipairs(specs) do
+                if spec[1] == specID then return spec[1], spec[2], "", spec[3], spec[4] end
+            end
+        end
+        local f = CSI and CSI.GetSpecializationInfo
+        if not f then return nil end
+        local count = (GetNumSpecializations and GetNumSpecializations()) or 0
+        for index = 1, math.max(1, count) do
+            local id, name, description, icon, role = f(index)
+            if id == specID then return id, name, description, icon, role end
+        end
+    end
+end
+
+local CELL_VERSION_FALLBACK = "r277.9.9.5-forever"
 
 function F.InitAddonVersion()
     local getMeta = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
@@ -65,13 +410,7 @@ end
 -------------------------------------------------
 -- class
 -------------------------------------------------
-local localizedClass
-if Cell.isRetail then
-    localizedClass = LocalizedClassList()
-else
-    localizedClass = {}
-    FillLocalizedClassList(localizedClass)
-end
+local localizedClass = LocalizedClassList()
 
 local sortedClasses = {}
 local classFileToID = {}
@@ -849,9 +1188,10 @@ end
 -- end
 
 function F.UnitFullName(unit)
-    if not unit or not UnitIsPlayer(unit) then return end
+    if not unit or not F.IsKnownTrue(UnitIsPlayer(unit)) then return end
 
     local name = GetUnitName(unit, true)
+    if name and not F.IsValueNonSecret(name) then return name end -- secret string: no string ops
 
     --? name might be nil in some cases?
     if name and not string.find(name, "-") then
@@ -863,6 +1203,70 @@ function F.UnitFullName(unit)
     end
 
     return name
+end
+
+-------------------------------------------------
+-- Forever surname (First/Last name characters)
+-------------------------------------------------
+-- WoW Forever characters carry a surname, which UnitName hands back as its second value (on
+-- Retail that slot is the realm name instead). Two characters can share a first name but differ
+-- by surname -- reading only UnitName's first return (as Cell always used to) makes them show as
+-- the exact same name on the frames, with no way to tell them apart.
+--
+-- F.WithSurname(name, surname): joins "First Surname" the way Blizzard's own frames do, honoring
+-- the player's own "Show My Surname" preference (C_PlayerInfo.ShouldDisplaySurname) for their own
+-- name, and passing a secret name through untouched (can't be inspected or joined). Cached per
+-- name/surname pair so repaints never rebuild the same string twice.
+local withSurnameCache = {}
+function F.WithSurname(name, surname)
+    if not Cell.isForever then return name end
+    if not (type(name) == "string" and type(surname) == "string" and surname ~= "") then return name end
+    if not F.IsValueNonSecret(name) or not F.IsValueNonSecret(surname) then return name end
+
+    local C_PlayerInfo = _G.C_PlayerInfo
+    if C_PlayerInfo and C_PlayerInfo.ShouldDisplaySurname and not C_PlayerInfo.ShouldDisplaySurname() then
+        local myName, mySurname = UnitName("player")
+        if name == myName and surname == mySurname then return name end
+    end
+
+    local row = withSurnameCache[name]
+    if not row then row = {}; withSurnameCache[name] = row end
+    local full = row[surname]
+    if not full then
+        local sep = (Constants and Constants.CharacterNameSeparatorConsts
+            and Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR) or " "
+        local tail = sep..surname
+        -- Some units already carry it in the first value.
+        full = (name:sub(-#tail) == tail) and name or (name..tail)
+        row[surname] = full
+    end
+    return full
+end
+
+-- F.ForeverShortName(name, mode): "first" keeps only the first word, "last" only the last word,
+-- any other mode (or a one-word/secret/non-string name) returns it unchanged. Expects the ALREADY
+-- surname-joined "First Last" string from F.WithSurname. Cached per mode+name.
+local shortNameCache = {["first"] = {}, ["last"] = {}}
+function F.ForeverShortName(name, mode)
+    local cache = shortNameCache[mode]
+    if not cache or type(name) ~= "string" or not F.IsValueNonSecret(name) then return name end
+    local cached = cache[name]
+    if cached then return cached end
+
+    local sep = (Constants and Constants.CharacterNameSeparatorConsts
+        and Constants.CharacterNameSeparatorConsts.CHARACTERNAME_SURNAME_SEPARATOR) or " "
+    local words = (sep ~= " " and sep ~= "") and name:gsub(sep:gsub("%W", "%%%0"), " ") or name
+    local short
+    if mode == "first" then
+        short = words:match("^%s*(%S+)")
+    else
+        short = words:match("(%S+)%s*$")
+    end
+    short = short or name
+
+    if F.Getn(cache) >= 256 then wipe(cache) end
+    cache[name] = short
+    return short
 end
 
 function F.ToShortName(fullName)
@@ -1302,7 +1706,7 @@ function F.GetUnitClassColor(unit, class, guid)
     class = F.ResolveUnitClassFile(unit, class) or class or select(2, UnitClass(unit))
     guid = guid or UnitGUID(unit)
 
-    if UnitIsPlayer(unit) or IsTruthyOrSecret(UnitInPartyIsAI(unit)) then -- player
+    if IsTruthyOrSecret(UnitIsPlayer(unit)) or IsTruthyOrSecret(UnitInPartyIsAI(unit)) then -- player
         return F.GetClassColor(class)
     elseif F.IsPet(guid, unit) then -- pet
         return 0.5, 0.5, 1
@@ -1592,7 +1996,7 @@ function F.GetTargetUnitID(target)
 
     if not F.UnitInGroup(target) then return end
 
-    if UnitIsPlayer(target) or IsTruthyOrSecret(UnitInPartyIsAI(target)) then
+    if IsTruthyOrSecret(UnitIsPlayer(target)) or IsTruthyOrSecret(UnitInPartyIsAI(target)) then
         for unit in F.IterateGroupMembers() do
             if IsUnitMatchOrSecret(target, unit) then
                 return unit
@@ -1614,7 +2018,7 @@ function F.GetTargetPetID(target)
 
     if not F.UnitInGroup(target) then return end
 
-    if UnitIsPlayer(target) or IsTruthyOrSecret(UnitInPartyIsAI(target)) then
+    if IsTruthyOrSecret(UnitIsPlayer(target)) or IsTruthyOrSecret(UnitInPartyIsAI(target)) then
         for unit in F.IterateGroupMembers() do
             if IsUnitMatchOrSecret(target, unit) then
                 return F.GetPetUnit(unit)
@@ -2823,10 +3227,17 @@ function F.GetSpellTooltipInfo(spellId)
 end
 
 if Cell.isRetail or Cell.isMists then
+    -- Forever has no legacy global GetSpellInfo, only C_Spell.
     local GetSpellInfo = C_Spell.GetSpellInfo
     local GetSpellTexture = C_Spell.GetSpellTexture
     function F.GetSpellInfo(spellId)
         if not spellId then return end
+        -- click-casting binds can be "spellId:rank" (Classic-style downranking)
+        local rank
+        if type(spellId) == "string" then
+            local id, r = strsplit(":", spellId)
+            spellId, rank = tonumber(id) or id, tonumber(r)
+        end
         local info = GetSpellInfo(spellId)
         if not info then return end
 
@@ -2834,7 +3245,7 @@ if Cell.isRetail or Cell.isMists then
             info.iconID = GetSpellTexture(spellId)
         end
 
-        return info.name, info.iconID
+        return info.name, info.iconID, rank
     end
 else
     local GetSpellInfo = GetSpellInfo
@@ -2847,35 +3258,35 @@ else
     end
 end
 
-if Cell.isWrath or Cell.isTBC or Cell.isVanilla then
-    local GetSpellInfo = GetSpellInfo
+if Cell.isForever or Cell.isWrath or Cell.isTBC or Cell.isVanilla then
+    local GetSpellInfo = Cell.isForever and F.GetSpellInfo or GetSpellInfo
     local GetNumSpellTabs = GetNumSpellTabs
     local GetSpellTabInfo = GetSpellTabInfo
     local GetSpellBookItemName = GetSpellBookItemName
 
     local MATCH_PATTERN, FORMAT_PATTERN = "Rank (%d+)", "Rank %d"
-    if LOCALE_deDE or LOCALE_frFR then
+    if (GetLocale() == "deDE") or (GetLocale() == "frFR") then
         MATCH_PATTERN = "Rang (%d+)"
         FORMAT_PATTERN = "Rang %d"
-    elseif LOCALE_esES or LOCALE_esMX then
+    elseif (GetLocale() == "esES") or (GetLocale() == "esMX") then
         MATCH_PATTERN = "Rango (%d+)"
         FORMAT_PATTERN = "Rango %d"
-    -- elseif LOCALE_itIT then -- not supported in classic
+    -- elseif (GetLocale() == "itIT") then -- not supported in classic
     --     MATCH_PATTERN = "Grado (%d+)"
     --     FORMAT_PATTERN = "Grado %d"
-    elseif LOCALE_koKR then
+    elseif (GetLocale() == "koKR") then
         MATCH_PATTERN = "(%d+) 레벨"
         FORMAT_PATTERN = "%d 레벨"
-    elseif LOCALE_ptBR then
+    elseif (GetLocale() == "ptBR") then
         MATCH_PATTERN = "Grau (%d+)"
         FORMAT_PATTERN = "Grau %d"
-    elseif LOCALE_ruRU then
+    elseif (GetLocale() == "ruRU") then
         MATCH_PATTERN = "Уровень (%d+)"
         FORMAT_PATTERN = "Уровень %d"
-    elseif LOCALE_zhCN then
+    elseif (GetLocale() == "zhCN") then
         MATCH_PATTERN = "等级 (%d+)"
         FORMAT_PATTERN = "等级 %d"
-    elseif LOCALE_zhTW then
+    elseif (GetLocale() == "zhTW") then
         MATCH_PATTERN = "等級 (%d+)"
         FORMAT_PATTERN = "等級 %d"
     end
@@ -2891,6 +3302,29 @@ if Cell.isWrath or Cell.isTBC or Cell.isVanilla then
         if not spellName then return end
 
         local maxRank = 0
+
+        -- Forever: modern spellbook API (C_SpellBook), the legacy tab functions may not exist.
+        -- Ranks are read from each entry's subtext ("Rank N"), same as the Classic path below.
+        if Cell.isForever and C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines then
+            local bank = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player or 0
+            for line = 1, C_SpellBook.GetNumSpellBookSkillLines() do
+                local lineInfo = C_SpellBook.GetSpellBookSkillLineInfo(line)
+                if lineInfo then
+                    local offset, count = lineInfo.itemIndexOffset or 0, lineInfo.numSpellBookItems or 0
+                    for i = offset + 1, offset + count do
+                        local name, subText = C_SpellBook.GetSpellBookItemName(i, bank)
+                        if name == spellName and subText and F.IsValueNonSecret(subText) then
+                            local rank = tonumber(subText:match(MATCH_PATTERN) or subText:match("(%d+)"))
+                            if rank and rank > maxRank then
+                                maxRank = rank
+                            end
+                        end
+                    end
+                end
+            end
+            return maxRank
+        end
+
         local bookType = BOOKTYPE_SPELL
 
         local totalSpells = 0
@@ -2921,6 +3355,205 @@ if Cell.isWrath or Cell.isTBC or Cell.isVanilla then
         -- end
 
         return maxRank
+    end
+end
+
+-- Forever: the aura engine only filters by spell ID and every spell rank has its own ID, so an entry like
+-- Lightning Shield (324) must also match the higher ranks. Returns the IDs of all spellbook entries that
+-- share the spell's name (i.e. the ranks the player knows).
+if Cell.isForever then
+    local rankCache = {}
+    local rankFrame = CreateFrame("Frame")
+    rankFrame:RegisterEvent("SPELLS_CHANGED")
+    rankFrame:SetScript("OnEvent", function() wipe(rankCache) end)
+
+    function F.GetSameNameSpellIDs(spellId)
+        local name = F.GetSpellInfo(spellId)
+        if not name then return {} end
+        if rankCache[name] then return rankCache[name] end
+
+        local ids = {}
+        if C_SpellBook and C_SpellBook.GetNumSpellBookSkillLines then
+            local bank = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player or 0
+            for line = 1, C_SpellBook.GetNumSpellBookSkillLines() do
+                local lineInfo = C_SpellBook.GetSpellBookSkillLineInfo(line)
+                if lineInfo then
+                    local offset, count = lineInfo.itemIndexOffset or 0, lineInfo.numSpellBookItems or 0
+                    for i = offset + 1, offset + count do
+                        if C_SpellBook.GetSpellBookItemName(i, bank) == name then
+                            local item = C_SpellBook.GetSpellBookItemInfo and C_SpellBook.GetSpellBookItemInfo(i, bank)
+                            local id = item and item.spellID
+                            if type(id) == "number" then
+                                tinsert(ids, id)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+        rankCache[name] = ids
+        return ids
+    end
+
+    -- " (R1)" style suffix for spells that have ranks, "" otherwise (used in the indicator spell lists)
+    function F.GetSpellRankSuffix(spellId)
+        if not (spellId and C_Spell and C_Spell.GetSpellSubtext) then return "" end
+        local ok, subText = pcall(C_Spell.GetSpellSubtext, spellId)
+        if not ok or type(subText) ~= "string" or not F.IsValueNonSecret(subText) then return "" end
+        local rank = subText:match("(%d+)")
+        if rank then
+            return " |cff888888(R" .. rank .. ")|r"
+        end
+        return ""
+    end
+
+    -- Forever: the hardcoded lists in Defaults/ClickCasting_DefaultSpells.lua carry the retail spell IDs,
+    -- and this realm's IDs differ (Blessing of Kings, Cleanse, ... simply are not listed there). So also
+    -- build the candidate pool from the spellbook: everything the character has learned that can be
+    -- clicked -- passives, professions and the non-spell entries are skipped. Cached until it changes.
+    local NON_COMBAT_SKILL_LINES = {
+        [129] = true, -- First Aid - 急救
+        [164] = true, -- Blacksmithing - 锻造
+        [165] = true, -- Leatherworking (classic) - 制皮
+        [171] = true, -- Alchemy - 炼金
+        [182] = true, -- Herbalism - 草药
+        [185] = true, -- Cooking - 烹饪
+        [186] = true, -- Mining - 采矿
+        [197] = true, -- Tailoring - 裁缝
+        [202] = true, -- Engineering - 工程
+        [333] = true, -- Enchanting - 附魔
+        [356] = true, -- Fishing - 钓鱼
+        [393] = true, -- Leatherworking / Skinning - 制皮/剥皮
+        [755] = true, -- Jewelcrafting - 珠宝加工
+        [762] = true, -- Riding - 骑术
+        [773] = true, -- Inscription - 铭文
+        [794] = true, -- Archaeology - 考古
+    }
+    local NON_CLICKABLE_ITEM_TYPES = {
+        MOUNT = true, PETACTION = true, FUTURESPELL = true,
+    }
+    -- Basic attack actions: always in the spellbook, never worth a click-casting binding.
+    local NON_CLICKABLE_SPELLS = {
+        [6603] = true, -- Attack - 攻击
+        [75] = true,   -- Auto Shot - 自动射击
+        [5019] = true, -- Shoot - 射击
+        [2764] = true, -- Throw - 投掷
+    }
+
+    local bookCache
+    local bookFrame = CreateFrame("Frame")
+    bookFrame:RegisterEvent("SPELLS_CHANGED")
+    bookFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    bookFrame:RegisterEvent("PLAYER_LEVEL_UP")
+    bookFrame:RegisterEvent("SKILL_LINES_CHANGED")
+    bookFrame:SetScript("OnEvent", function() bookCache = nil end)
+
+    local IsSpellPassive = C_Spell and C_Spell.IsSpellPassive
+    local LegacyIsSpellPassive = _G.IsPassiveSpell
+    local function SpellIsPassive(spellID)
+        if IsSpellPassive then
+            local ok, passive = pcall(IsSpellPassive, spellID)
+            if ok then return passive end
+        end
+        if LegacyIsSpellPassive then
+            local ok, passive = pcall(LegacyIsSpellPassive, spellID)
+            if ok then return passive end
+        end
+        return false
+    end
+
+    -- Spells that can only be cast on the player themselves (Divine Shield, Avenging Wrath, auras,
+    -- seals, ...) report no range at all, and a click-casting binding is always aimed at some unit
+    -- frame, so they would never do anything useful here -- drop them.
+    local function SpellIsSelfOnly(spellID)
+        if not (C_Spell and C_Spell.GetSpellInfo) then return false end
+        local ok, selfOnly = pcall(function()
+            local info = C_Spell.GetSpellInfo(spellID)
+            return type(info) == "table" and tonumber(info.maxRange) == 0
+        end)
+        return ok and selfOnly
+    end
+
+    -- Harmful spells (Judgment, Hammer of Wrath, Exorcism, ...) are for enemy frames; a click-casting
+    -- binding lives on unit frames of friendly units, so they belong to the action bars instead.
+    function F.IsHarmfulSpell(spellID)
+        local api = C_Spell and C_Spell.IsSpellHarmful
+        if not api then return false end
+        local ok, harmful = pcall(api, spellID)
+        return ok and harmful == true
+    end
+
+    local function RankOf(subText)
+        if type(subText) ~= "string" or not F.IsValueNonSecret(subText) then return -1 end
+        return tonumber(subText:match("(%d+)")) or -1
+    end
+
+    -- Returns {ids = {...}, known = {[name] = true}}: clickable spell IDs (one per name, the highest
+    -- rank) and every learned spell name (used to tell "not learned yet" from "no rank info").
+    function F.GetSpellbookSpells()
+        if bookCache then return bookCache end
+
+        local known = {}
+        local ids, best = {}, {}
+
+        local book = C_SpellBook
+        if book and book.GetNumSpellBookSkillLines then
+            local bank = Enum and Enum.SpellBookSpellBank and Enum.SpellBookSpellBank.Player or 0
+            for line = 1, book.GetNumSpellBookSkillLines() do
+                local okLine, lineInfo = pcall(book.GetSpellBookSkillLineInfo, line)
+                if okLine and type(lineInfo) == "table" and not NON_COMBAT_SKILL_LINES[lineInfo.skillLineID] then
+                    local offset = tonumber(lineInfo.itemIndexOffset) or 0
+                    local count = tonumber(lineInfo.numSpellBookItems) or 0
+                    for index = offset + 1, offset + count do
+                        local okName, name, subText, nameSpellID = pcall(book.GetSpellBookItemName, index, bank)
+                        if okName and type(name) == "string" then
+                            known[name] = true
+
+                            local spellID, itemType = tonumber(nameSpellID), nil
+                            if not spellID then
+                                local okInfo, first, second = pcall(book.GetSpellBookItemInfo, index, bank)
+                                if okInfo then
+                                    if type(first) == "table" then
+                                        spellID, itemType = tonumber(first.spellID), first.itemType
+                                    elseif type(second) == "number" then
+                                        spellID, itemType = second, first
+                                    end
+                                end
+                            end
+
+                            if spellID and not NON_CLICKABLE_SPELLS[spellID]
+                                and not NON_CLICKABLE_ITEM_TYPES[itemType] and not SpellIsPassive(spellID)
+                                and not SpellIsSelfOnly(spellID) and not F.IsHarmfulSpell(spellID) then
+                                local rank = RankOf(subText)
+                                local entry = best[name]
+                                if not entry then
+                                    best[name] = {id = spellID, rank = rank}
+                                    ids[#ids + 1] = spellID
+                                elseif rank > entry.rank then
+                                    entry.id, entry.rank = spellID, rank
+                                    for i = 1, #ids do
+                                        if ids[i] == entry.id then
+                                            ids[i] = spellID
+                                            break
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        bookCache = {ids = ids, known = known}
+        return bookCache
+    end
+
+    -- "has this character learned the spell?" -- by name, because a click-casting entry may use a
+    -- different rank/ID than the spellbook does.
+    function F.IsSpellInSpellbook(spellId)
+        local name = F.GetSpellInfo(spellId)
+        return (name and F.GetSpellbookSpells().known[name]) and true or false
     end
 end
 
@@ -3690,8 +4323,10 @@ function F.IsAuraRestricted()
             return true
         end
     end
+    -- Retail 12.1+ treats auras as restricted whenever you are in combat; Forever reports a low build
+    -- number but runs the same API, so it follows the same rule.
     local build = select(4, GetBuildInfo())
-    if Cell.isRetail and build and build >= 120100 and InCombatLockdown() then
+    if ((Cell.isRetail and build and build >= 120100) or Cell.isForever) and InCombatLockdown() then
         return true
     end
     return false

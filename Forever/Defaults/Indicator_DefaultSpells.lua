@@ -1261,7 +1261,10 @@ local spells =  {
     10929, -- Renew (Vanilla rank 9)
     25315, -- Renew (Vanilla rank 10)
     200829, -- 恳求 - Plea (added in 12.0, Disc)
-    41635, -- 愈合祷言 - Prayer of Mending
+    401859, -- 愈合祷言 R1 - Prayer of Mending (Forever rank 1)
+    1240826, -- 愈合祷言 R2 - Prayer of Mending (Forever rank 2)
+    1240827, -- 愈合祷言 R3 - Prayer of Mending (Forever rank 3)
+    -- 41635, -- Prayer of Mending aura (retail ID, unknown in Forever)
     17, -- 真言术：盾 - Power Word: Shield
     592, -- Power Word: Shield (Vanilla rank 2, primary)
     600, -- Power Word: Shield (Vanilla rank 3)
@@ -1396,6 +1399,9 @@ function F.PromptHealersIndicator(parent, opts)
                 if opts.onDone then opts.onDone() end
             end, opts.onReject, opts.mask, nil, nil, opts.key)
     end
+
+    -- opts.existingOnly: don't offer creating the indicator (used by the per-version update prompt)
+    if opts.existingOnly then return end
 
     local createText = opts.createText or L["Would you like Cell to create a \"Healers\" indicator (icons)?"]
     return Cell.CreateConfirmPopup(parent, opts.width or 200,

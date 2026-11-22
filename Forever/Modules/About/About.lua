@@ -182,7 +182,7 @@ local function CreateSpecialThanksPane()
     specialThanksText:SetSpacing(5)
     specialThanksText:SetJustifyH("LEFT")
     specialThanksText:SetText(
-        "|cfffb6f92露露缇娅, Reat TV, 钛锬, Floofe, warbaby, zlyon|r\n"..
+        "|cfffb6f92露露缇娅, Reat TV, 钛锬, Floofe, warbaby, zlyon 伽罗|r\n"..
         "|cffff0000Wago:|r Ora\n"..
         "|cffff3333YouTube:|r AutomaticJak, JFunkGaming, yumytv\n"..
         "|cff5662f6Discord:|r |cff7fff00clankz.|r, |cff7fff00DreadMesh|r, |cff7fff00Missgunst|r, |cff00ffffVollmerino|r, aba, BinarySunshine, Bruds, Gharr, honeyhoney, leaKsi, Serghei, swirl, Xepheris"
@@ -293,15 +293,23 @@ local function CreateLinksPane()
         linksEB:SetText(current)
         linksEB:ClearFocus()
     end)
-    dd:SetPoint("TOPLEFT", kook, "TOPRIGHT", 7, 0)
-
-    --! 新手盒子
     local wclbox = CreateLink(linksPane, "wclbox", "Interface\\AddOns\\Cell\\Media\\Links\\wclbox.png", function()
         current = "https://www.wclbox.com/share/AMy47t4htw5"
         linksEB:SetText(current)
         linksEB:ClearFocus()
     end)
-    wclbox:SetPoint("TOPLEFT", dd, "TOPRIGHT", 7, 0)
+
+    --! 联系作者
+    local wowBtn = CreateLink(linksPane, "wow", "Interface\\AddOns\\Cell\\Media\\Links\\wow.png", function()
+        current = "/who 圣教军 伽罗"
+        linksEB:SetText(current)
+        linksEB:ClearFocus()
+    end)
+
+    --! 网易DD / 新手盒子 / 联系作者 —— right-aligned, away from the international links
+    wowBtn:SetPoint("TOPRIGHT", linksEB, "BOTTOMRIGHT", 0, -7)
+    wclbox:SetPoint("TOPRIGHT", wowBtn, "TOPLEFT", -7, 0)
+    dd:SetPoint("TOPRIGHT", wclbox, "TOPLEFT", -7, 0)
 
 end
 

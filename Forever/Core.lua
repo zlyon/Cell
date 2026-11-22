@@ -1049,6 +1049,19 @@ function eventFrame:PLAYER_ENTERING_WORLD(isInitialLogin, isReloadingUi)
     if CellDB["firstRun"] then
         F.FirstRun()
     end
+
+    -- r277.9.9.5: after a version update, once per version, prompt existing users
+    -- to add newly-added default spells to their Healers indicator.
+    -- Fresh installs are skipped: FirstRun() above already offers the full list.
+    if Cell.version and CellDB["healersPromptVersion"] ~= Cell.version then
+        CellDB["healersPromptVersion"] = Cell.version
+        if not CellDB["firstRun"] then
+            F.PromptHealersIndicator(Cell.frames.anchorFrame, {
+                printIfUpToDate = true,
+                existingOnly = true,
+            })
+        end
+    end
 end
 
 -- Second, independent trigger for the same instanceType correction as RecheckInstanceType.
