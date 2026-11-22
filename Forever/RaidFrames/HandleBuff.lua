@@ -240,10 +240,20 @@ end
 if GetAuraDataByIndex then
     local drinkFrame = CreateFrame("Frame")
     drinkFrame:RegisterEvent("UNIT_AURA")
-    drinkFrame:SetScript("OnEvent", function(_, _, unit)
+    drinkFrame:SetScript("OnEvent", function(_, _, unit, info)
         if not unit or not hb.enabledIndicators or not hb.enabledIndicators["statusText"] then return end
         if InCombatLockdown() then return end
         if F.IsAuraRestricted and F.IsAuraRestricted() then return end
+        -- Sealed payload: in battlegrounds the game hands a secret UNIT_AURA payload exactly
+        -- when aura access is denied (the InCombatLockdown()/IsAuraRestricted() checks above
+        -- both report clear). Skip the scan entirely then -- the tainted GetAuraDataByIndex
+        -- call never happens, so it also never registers as a blocked action (which pcall
+        -- alone could not suppress: the "only available to Blizzard UI" popup comes from the
+        -- taint log, not the thrown error). Idea credited to Nucleus's sealed-payload guard.
+        if info ~= nil and F.HasAnySecretValues(info.isFullUpdate, info.addedAuras,
+            info.updatedAuraInstanceIDs, info.removedAuraInstanceIDs) then
+            return
+        end
         F.HandleUnitButton("unit", unit, UpdateDrinkingStatus)
     end)
 end

@@ -1050,6 +1050,35 @@ function eventFrame:PLAYER_ENTERING_WORLD(isInitialLogin, isReloadingUi)
         F.FirstRun()
     end
 
+    -- r277.9.9.8: fix the Prayer of Mending aura IDs that the 9.9.5 prompt already seeded into
+    -- existing saves -- 401859/1240826/1240827 were the spell IDs, not the buff IDs Forever
+    -- actually puts on targets (real aura IDs per Nucleus's Forever tables). Replace in place
+    -- (keep order), drop duplicates. Runs before the prompt below so its diff sees clean data.
+    if Cell.version and CellDB["healersPoMFixVersion"] ~= Cell.version then
+        CellDB["healersPoMFixVersion"] = Cell.version
+        local fixMap = { [401859] = 401877, [1240826] = 1240848, [1240827] = 1240849 }
+        for _, layout in pairs(CellDB["layouts"]) do
+            local inds = layout and layout["indicators"]
+            if inds then
+                for _, ind in ipairs(inds) do
+                    if ind["name"] == "Healers" and type(ind["auras"]) == "table" then
+                        local seen, out = {}, {}
+                        for _, id in ipairs(ind["auras"]) do
+                            id = fixMap[id] or id
+                            if not seen[id] then
+                                seen[id] = true
+                                out[#out + 1] = id
+                            end
+                        end
+                        -- refill in place: runtime code may hold a reference to this exact table
+                        for i = #ind["auras"], 1, -1 do ind["auras"][i] = nil end
+                        for _, id in ipairs(out) do tinsert(ind["auras"], id) end
+                    end
+                end
+            end
+        end
+    end
+
     -- r277.9.9.5: after a version update, once per version, prompt existing users
     -- to add newly-added default spells to their Healers indicator.
     -- Fresh installs are skipped: FirstRun() above already offers the full list.

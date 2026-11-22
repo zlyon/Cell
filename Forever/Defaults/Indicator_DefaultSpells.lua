@@ -1181,7 +1181,11 @@ local spells =  {
     155777, -- 回春术（萌芽） - Rejuvenation (Germination)
     33763, -- 生命绽放 - Lifebloom
     188550, -- 生命绽放 - Lifebloom
+    408124, -- 生命绽放 - Lifebloom (Forever aura ID)
     48438, -- 野性成长 - Wild Growth
+    408120, -- 野性成长 R1 - Wild Growth (Forever rank 1, aura ID)
+    1238214, -- 野性成长 R2 - Wild Growth (Forever rank 2, aura ID)
+    1238215, -- 野性成长 R3 - Wild Growth (Forever rank 3, aura ID)
     102351, -- 塞纳里奥结界 - Cenarion Ward
     102352, -- 塞纳里奥结界 - Cenarion Ward
     391891, -- 激变蜂群 - Adaptive Swarm
@@ -1248,6 +1252,10 @@ local spells =  {
     1241717, -- 炽天使屏障 - Seraphic Barrier
     432496, -- 圣洁壁垒 - Holy Bulwark (Holy Armaments shield variant)
     432502, -- 圣洁武器 - Holy Armaments (Sacred Weapon variant)
+    412019, -- 神圣之盾 - Sacred Shield (Forever aura ID)
+    1310909, -- 圣光守望 R1 - Light's Vigil (Forever rank 1, aura ID)
+    1311593, -- 圣光守望 R2 - Light's Vigil (Forever rank 2, aura ID)
+    1311597, -- 圣光守望 R3 - Light's Vigil (Forever rank 3, aura ID)
 
     -- priest
     139, -- 恢复 - Renew (removed in 12.0)
@@ -1261,9 +1269,9 @@ local spells =  {
     10929, -- Renew (Vanilla rank 9)
     25315, -- Renew (Vanilla rank 10)
     200829, -- 恳求 - Plea (added in 12.0, Disc)
-    401859, -- 愈合祷言 R1 - Prayer of Mending (Forever rank 1)
-    1240826, -- 愈合祷言 R2 - Prayer of Mending (Forever rank 2)
-    1240827, -- 愈合祷言 R3 - Prayer of Mending (Forever rank 3)
+    401877, -- 愈合祷言 R1 - Prayer of Mending (Forever rank 1, aura ID; 401859 was the spell ID and never matched)
+    1240848, -- 愈合祷言 R2 - Prayer of Mending (Forever rank 2, aura ID)
+    1240849, -- 愈合祷言 R3 - Prayer of Mending (Forever rank 3, aura ID)
     -- 41635, -- Prayer of Mending aura (retail ID, unknown in Forever)
     17, -- 真言术：盾 - Power Word: Shield
     592, -- Power Word: Shield (Vanilla rank 2, primary)
@@ -1277,6 +1285,7 @@ local spells =  {
     10901, -- Power Word: Shield (Vanilla rank 10)
     194384, -- 救赎 - Atonement
     77489, -- 圣光回响 - Echo of Light
+    431624, -- 神圣护盾 - Divine Aegis (Forever aura ID)
     372847, -- 光明之泉恢复 - Blessed Bolt
     -- 443526, -- 慰藉预兆 - Premonition of Solace (removed in 12.0)
     1253593, -- 虚空之盾 - Void Shield
@@ -1288,7 +1297,11 @@ local spells =  {
     32593, -- Earth Shield (Rank 2)
     32594, -- Earth Shield (Rank 3)
     383648, -- 大地之盾（天赋） - Earth Shield
+    408514, -- 大地之盾 - Earth Shield (Forever aura ID)
     61295, -- 激流 - Riptide
+    408521, -- 激流 R1 - Riptide (Forever rank 1, aura ID)
+    1239242, -- 激流 R2 - Riptide (Forever rank 2, aura ID)
+    1239243, -- 激流 R3 - Riptide (Forever rank 3, aura ID)
     382024, -- 大地生命武器 - Earthliving Weapon
     375986, -- 始源之潮 - Primordial Wave
     207400, -- 先祖活力 - Ancestral Vigor
