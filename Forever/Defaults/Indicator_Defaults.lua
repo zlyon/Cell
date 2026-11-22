@@ -3,6 +3,7 @@ local _, Cell = ...
 local F = Cell.funcs
 ---@class CellUnitButtonFuncs
 local I = Cell.iFuncs
+local L = Cell.L
 
 -------------------------------------------------
 -- custom indicator
@@ -287,6 +288,34 @@ function I.GetDefaultCustomIndicatorTable(name, indicatorName, type, auraType)
     end
 
     return t
+end
+
+-------------------------------------------------
+-- weakened soul (Weakened Soul, debuff 6788)
+-- Forever-only: retail removed this debuff in Dragonflight
+-------------------------------------------------
+function I.GetDefaultWeakenedSoulIndicator()
+    return {
+        ["name"] = L["Weakened Soul"],
+        ["indicatorName"] = "indicator1",
+        ["type"] = "block",
+        ["enabled"] = false,
+        ["position"] = {"BOTTOMRIGHT", "button", "BOTTOMRIGHT", 0, 3},
+        ["frameLevel"] = 5,
+        ["size"] = {10, 10},
+        ["colors"] = {"duration", {1, 0, 0, 1}, {false, 0.5, {1, 1, 0, 1}}, {false, 3, {1, 0, 0, 1}}, {0, 0, 0, 1}},
+        ["font"] = {
+            {"Cell " .. _G.DEFAULT, 11, "Outline", false, "TOPRIGHT", 2, 1, {1, 1, 1}},
+            {"Cell " .. _G.DEFAULT, 11, "Outline", false, "BOTTOMRIGHT", 2, -1, {1, 1, 1}},
+        },
+        ["showStack"] = false,
+        ["showDuration"] = false,
+        ["animationStyle"] = "clock",
+        ["auraType"] = "debuff",
+        ["auras"] = {6788},
+        ["castBy"] = "anyone",
+        ["glowOptions"] = {"None", {0.95, 0.95, 0.32, 1}},
+    }
 end
 
 -------------------------------------------------

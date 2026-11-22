@@ -4018,6 +4018,37 @@ function F.Revise()
         end
     end
 
+    -- One-time: seed a disabled "Weakened Soul" (debuff 6788) block indicator into every
+    -- existing layout, so users can simply enable it instead of building one by hand.
+    -- Fill-only: skip layouts that already have any indicator tracking 6788.
+    if not CellDB["addedWeakenedSoulIndicator"] then
+        CellDB["addedWeakenedSoulIndicator"] = true
+        for _, layout in pairs(CellDB["layouts"]) do
+            if type(layout["indicators"]) == "table" and #layout["indicators"] > 0 then
+                local exists = false
+                for _, ind in ipairs(layout["indicators"]) do
+                    if type(ind["auras"]) == "table" then
+                        for _, id in pairs(ind["auras"]) do
+                            if id == 6788 then
+                                exists = true
+                                break
+                            end
+                        end
+                    end
+                    if exists then break end
+                end
+                if not exists then
+                    local t = I.GetDefaultWeakenedSoulIndicator()
+                    -- unique indicatorName, same scheme as manual creation
+                    local last = layout["indicators"][#layout["indicators"]]
+                    local num = last and last["indicatorName"] and last["indicatorName"]:match("%d+")
+                    t["indicatorName"] = "indicator" .. ((tonumber(num) or 0) + 1)
+                    tinsert(layout["indicators"], t)
+                end
+            end
+        end
+    end
+
     CellDB["revise"] = Cell.version
     if CellCharacterDB then
         CellCharacterDB["revise"] = Cell.version

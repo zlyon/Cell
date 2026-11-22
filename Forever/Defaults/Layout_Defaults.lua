@@ -616,6 +616,7 @@ Cell.defaults.layout = {
             ["frameLevel"] = 30,
             ["size"] = {18, 18},
         }, -- 34
+        Cell.iFuncs.GetDefaultWeakenedSoulIndicator(), -- 35, seeded disabled
     },
 }
 
