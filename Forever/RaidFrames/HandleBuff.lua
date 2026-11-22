@@ -213,9 +213,14 @@ local function UpdateDrinkingStatus(b)
 
     local found = false
     for i = 1, 40 do
-        local aura = GetAuraDataByIndex(unit, i, "HELPFUL")
-        if not aura then break end
-        if F.IsValueNonSecret(aura.spellId) and I.IsDrinking(aura.name, aura.spellId) then
+        -- Secret-aura denial: in battlegrounds the server can flag auras as secret even when
+        -- InCombatLockdown()/F.IsAuraRestricted() both report clear, and a tainted call then
+        -- throws "GetAuraDataByIndex(): Auras cannot be accessed when secret" on every
+        -- UNIT_AURA event. Same pcall guard as F.GetAuraDurationBySpellIds (Utils.lua).
+        local ok, aura = pcall(GetAuraDataByIndex, unit, i, "HELPFUL")
+        if not ok or not aura then break end
+        if F.IsValueNonSecret(aura.spellId) and F.IsValueNonSecret(aura.name)
+            and I.IsDrinking(aura.name, aura.spellId) then
             found = true
             break
         end
