@@ -1121,7 +1121,11 @@ local function UpdateIndicators(layout, indicatorName, setting, value, value2)
                 F.IterateAllUnitButtons(function(b)
                     UpdateIndicatorParentVisibility(b, indicatorName, value)
                     if not value then
-                        BD(b).indicators[indicatorName]:Hide() -- hide indicators which is shown right now
+                        -- a custom indicator that was never enabled has no legacy object at
+                        -- all; an unguarded :Hide() used to throw here and abort the whole
+                        -- Cell.Fire chain, taking the custom-frame refresh with it
+                        local ind = BD(b).indicators[indicatorName]
+                        if ind then ind:Hide() end
                         if I.DisableCombatAuraDisplay then
                             I.DisableCombatAuraDisplay(b, indicatorName)
                         end

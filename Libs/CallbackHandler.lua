@@ -21,6 +21,16 @@ function Cell.Fire(eventName, ...)
     if not callbacks[eventName] then return end
 
     for onEventFuncName, onEventFunc in pairs(callbacks[eventName]) do
-        onEventFunc(...)
+        -- One listener blowing up must not swallow the event for the rest: the frame
+        -- refresh paths live in here, and a single error used to leave them stale until
+        -- /reload. The error still reaches the default handler (same as Blizzard's own
+        -- CallbackHandler), so nothing is hidden silently.
+        local ok, err = pcall(onEventFunc, ...)
+        if not ok then
+            local eh = geterrorhandler and geterrorhandler()
+            if eh then
+                eh("Cell callback '"..tostring(onEventFuncName).."' ("..tostring(eventName).."): "..tostring(err))
+            end
+        end
     end
 end

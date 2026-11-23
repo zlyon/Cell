@@ -2446,6 +2446,12 @@ local function ShowIndicatorSettings(id)
                 indicatorTable[currentSetting] = value
                 Cell.Fire("UpdateIndicators", notifiedLayout, indicatorName, currentSetting, value)
                 UpdateIndicatorButtonVisual(id)
+                -- Custom indicators draw themselves outside the legacy scanner, so the generic
+                -- event above is not enough on its own: toggling used to need a /reload before
+                -- the block appeared or disappeared. Nudge that layer directly.
+                if I.RefreshCustomIndicatorFrames then
+                    I.RefreshCustomIndicatorFrames(indicatorName, value)
+                end
             end)
 
         -- checkbutton + thickness slider combined in one box

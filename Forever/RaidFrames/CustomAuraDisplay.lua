@@ -1570,13 +1570,22 @@ local function SimpleStub(frame)
     frame.SetDurationBar = function(self, bar) self._simpleAnim = bar end
 end
 
+--! 帧的身份不能只看 indicatorName。类型（色块 / 图标）、尺寸、颜色、动画样式这些
+--! 都是 init 时烘进贴图里的，改完配置却复用同一个旧帧，就会出现「选的是色块，
+--! 显示的还是技能图标」——旧帧是上一次按图标建出来的。MakeParkKey 已经把这些字段
+--! 全算进 key 里了（引擎路径本来就靠它判断要不要重建），这里直接借它当身份。
+local function SimpleKey(cfg)
+    return (cfg.indicatorName or "?") .. "\1" .. MakeParkKey(cfg)
+end
+
 local function SimpleEnsure(unitButton, cfg)
     local map = simpleByButton[unitButton]
     if not map then
         map = {}
         simpleByButton[unitButton] = map
     end
-    local f = map[cfg.indicatorName]
+    local key = SimpleKey(cfg)
+    local f = map[key]
     if not f then
         -- 父级用 indicatorFrame：内置减益/文字/图标都挂在这里，是本客户端上确认
         -- 可以正常渲染的层级；锚点仍然指向单位框体，位置不受影响。
@@ -1593,7 +1602,8 @@ local function SimpleEnsure(unitButton, cfg)
             fill:SetColorTexture(r, g, b, a)
         end
         f:Hide()
-        map[cfg.indicatorName] = f
+        map[key] = f
+        f._simpleKey = key
     end
 
     if IsOverlayType(cfg.type) then
@@ -1722,12 +1732,42 @@ local function SimpleUpdate(unitButton, cfg)
     f:Show()
 end
 
+-- 取消勾选后必须立刻消失：同步只遍历「当前启用」的配置，以前没有任何代码去碰那些
+-- 已经从配置里消失的帧，所以红块要等 /reload 才没。
+local function SimpleHideIndicator(unitButton, indicatorName)
+    local map = simpleByButton[unitButton]
+    if not map then return end
+    -- 帧按「名字 + 配置签名」存（同一个指示器换类型会留下新旧两个 key），
+    -- 所以按前缀收，不能只查名字。
+    local prefix = indicatorName .. "\1"
+    for key, f in pairs(map) do
+        if key:sub(1, #prefix) == prefix then
+            f:Hide()
+        end
+    end
+end
+
 function SimpleSyncButton(unitButton)
     local list = cachedConfigs or RefreshCachedConfigs()
+    local seen
     for i = 1, #list do
         local cfg = list[i]
+        if cfg.indicatorName then
+            seen = seen or {}
+            seen[SimpleKey(cfg)] = true
+        end
         SimpleUpdate(unitButton, cfg)
         HideLegacy(unitButton, cfg.indicatorName)
+    end
+    -- 收尾：这一轮没配置的帧说明已被取消勾选/删除，当场隐藏（原来会一直留在屏幕上
+    -- 直到重载）。
+    local map = simpleByButton[unitButton]
+    if map then
+        for name, f in pairs(map) do
+            if not (seen and seen[name]) then
+                f:Hide()
+            end
+        end
     end
 end
 
@@ -1833,6 +1873,39 @@ end
 function I.UpdateCustomAuraDisplays(unitButton)
     if not SUPPORTED then return end
     SyncButton(unitButton, true)
+end
+
+-- 设置面板里勾选/取消自定义指示器要当场生效（用户实测：勾了要 /reload 才出现，
+-- 取消了要 /reload 才消失）。原因不在数据层——配置本来就写进了布局表——而是这一层
+-- 只在下一次光环事件/重载时才重建，勾选这个动作本身没有触发它。
+function I.RefreshCustomIndicatorFrames(indicatorName, enabled)
+    if not SUPPORTED or type(indicatorName) ~= "string" then return end
+    if not indicatorName:find("^indicator") then return end
+    cachedConfigs = nil
+
+    if not SIMPLE_MODE then
+        F.IterateAllUnitButtons(function(b)
+            SyncButton(b, true)
+        end, true)
+        return
+    end
+
+    local list = enabled and RefreshCachedConfigs() or nil
+    F.IterateAllUnitButtons(function(b)
+        if not F.BD(b)._indicatorsReady then return end
+        if not enabled then
+            SimpleHideIndicator(b, indicatorName)
+            return
+        end
+        for i = 1, #list do
+            local cfg = list[i]
+            if cfg.indicatorName == indicatorName then
+                SimpleUpdate(b, cfg)
+                HideLegacy(b, indicatorName)
+                break
+            end
+        end
+    end, true)
 end
 
 -- spreads the restyle over a few buttons per frame to avoid tripping
