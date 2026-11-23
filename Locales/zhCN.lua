@@ -1,4 +1,4 @@
-if not LOCALE_zhCN then return end
+﻿if not LOCALE_zhCN then return end
 
 local L = select( 2, ...).L
 
@@ -921,6 +921,10 @@ L["CHANGELOGS"] = [[
 ]]
 
 L["OLDER_CHANGELOGS"] = [[
+    <h1>r277.9.9.11-forever (2026-11-23)</h1>
+    <p>* 修复：自定义指示器不显示的问题。</p>
+    <p>* 新增：/cell ws 补更新指示器。</p>
+    <br/>
     <h1>r277.9.9.10-forever (2026-11-22)</h1>
     <p>* 新增：内置「灵魂虚弱」色块指示器（真言术：盾的伴随减益），默认关闭，可在 指示器 列表里直接启用，无需手动创建。</p>
     <p>* 已自行配置过灵魂虚弱的用户不会重复添加。</p>

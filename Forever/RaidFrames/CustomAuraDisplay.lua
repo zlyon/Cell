@@ -1029,6 +1029,31 @@ local function MakeInitAuraButton(cfg)
     end
 end
 
+-- 按钮的初始绘制：按 cfg.type 选用引擎自己的 MakeInit*Button。
+-- 引擎路径和自绘路径都走这里，样式永远只有一个来源（插件原有实现 + cfg）。
+local function BuildInitFrame(cfg, unitButton)
+    if cfg.type == "color" then
+        return MakeInitColorButton(cfg, unitButton)
+    elseif cfg.type == "border" then
+        return MakeInitBorderButton(cfg, unitButton)
+    elseif cfg.type == "text" then
+        return MakeInitTextButton(cfg)
+    elseif cfg.type == "rect" then
+        return MakeInitRectButton(cfg)
+    elseif cfg.type == "bar" or cfg.type == "bars" then
+        return MakeInitBarButton(cfg)
+    elseif cfg.type == "block" or cfg.type == "blocks" then
+        return MakeInitBlockButton(cfg)
+    elseif cfg.type == "texture" then
+        return MakeInitTextureButton(cfg, unitButton)
+    elseif cfg.type == "overlay" then
+        return MakeInitOverlayButton(cfg, unitButton)
+    elseif cfg.type == "glow" then
+        return MakeInitGlowButton(cfg, unitButton)
+    end
+    return MakeInitAuraButton(cfg)
+end
+
 local function ResolveContainerParent(unitButton, cfg)
     if cfg and (cfg.type == "border" or cfg.type == "glow") and F.BD(unitButton).widgets and F.BD(unitButton).widgets.highLevelFrame then
         return F.BD(unitButton).widgets.highLevelFrame
@@ -1142,7 +1167,7 @@ local function AnchorContainer(container, unitButton, cfg)
     local spacingX = (cfg.spacing and cfg.spacing[1]) or 0
     local spacingY = (cfg.spacing and cfg.spacing[2]) or 0
     local num = IsSingleSlot(cfg.type) and 1 or (cfg.num or 5)
-    local numPerLine = cfg.numPerLine or num
+    local numPerLine = math.max(1, cfg.numPerLine or num)
     local pos = cfg.position or { "TOPRIGHT", "button", "TOPRIGHT", 0, 3 }
     local point = pos[1] or "TOPRIGHT"
     local relative = pos[2]
@@ -1154,15 +1179,49 @@ local function AnchorContainer(container, unitButton, cfg)
         relativeTo = F.BD(unitButton).widgets.healthBar
     end
 
+    local orientation = cfg.orientation or "left-to-right"
+    local vertical = (orientation == "top-to-bottom" or orientation == "bottom-to-top")
+
+    --! 容器矩形必须等于指示器的真实占位。
+    --! 这里长期写成 SetSize(1, 1)，流式布局就失去了参照系：元素虽然能画出来（关裁剪后），
+    --! 但整组会从 1x1 的角上按生长方向甩出去，位置不可控，遇到靠边/单槽的配置就整组
+    --! 飞到框体外面或被相邻框体压住，表现就是"配置全对、按钮也初始化了，但什么都看不见"。
+    --! 现在容器 = 组的总宽高，元素在容器内部排布，位置由容器矩形唯一决定。
+    local totalW, totalH
+    if vertical then
+        totalW = sizeW
+        totalH = num * sizeH + math.max(num - 1, 0) * spacingY
+    else
+        local lines = math.max(1, math.ceil(num / numPerLine))
+        totalW = numPerLine * sizeW + math.max(numPerLine - 1, 0) * spacingX
+        totalH = lines * sizeH + math.max(lines - 1, 0) * spacingY
+    end
+    if not (totalW > 0) then totalW = 1 end
+    if not (totalH > 0) then totalH = 1 end
+
     container:ClearAllPoints()
     container:SetPoint(point, relativeTo, relativePoint, x, y)
-    container:SetSize(1, 1)
-
-    if container.SetFlowLayoutAnchorPoint then
-        pcall(container.SetFlowLayoutAnchorPoint, container, point)
+    container:SetSize(totalW, totalH)
+    -- 元素已经全部落在容器内，裁剪开关保持关闭只是为了不误伤溢出 1px 的边框/发光。
+    if container.SetClipsChildren then
+        pcall(container.SetClipsChildren, container, false)
+    end
+    if container.EnableMouse then
+        pcall(container.EnableMouse, container, false)
     end
 
-    local orientation = cfg.orientation or "left-to-right"
+    -- 流式布局的起始角只由排列方向决定，与配置的锚点角无关：
+    -- 容器本身就是一块矩形区域，内容从它的左上/右上角开始往里填。
+    local flowAnchor = "TOPLEFT"
+    if orientation == "right-to-left" then
+        flowAnchor = "TOPRIGHT"
+    elseif orientation == "bottom-to-top" then
+        flowAnchor = "BOTTOMLEFT"
+    end
+    if container.SetFlowLayoutAnchorPoint then
+        pcall(container.SetFlowLayoutAnchorPoint, container, flowAnchor)
+    end
+
     local FD = AnchorUtil and AnchorUtil.FlowDirection
     if FD and container.SetFlowLayoutGrowthDirection then
         local h, v = FD.Right, FD.Down
@@ -1176,11 +1235,7 @@ local function AnchorContainer(container, unitButton, cfg)
         pcall(container.SetFlowLayoutGrowthDirection, container, h, v)
     end
     if container.SetFlowLayoutMaximumLineSize then
-        local rowWidth = numPerLine * sizeW + math.max(numPerLine - 1, 0) * spacingX + 0.4
-        if orientation == "top-to-bottom" or orientation == "bottom-to-top" then
-            rowWidth = sizeH + 0.4
-        end
-        pcall(container.SetFlowLayoutMaximumLineSize, container, rowWidth)
+        pcall(container.SetFlowLayoutMaximumLineSize, container, totalW + 0.4)
     end
 
     local groupKey = cfg.indicatorName
@@ -1193,8 +1248,13 @@ local function AnchorContainer(container, unitButton, cfg)
         })
     end
 
-    local parent = ResolveContainerParent(unitButton, cfg)
-    container:SetFrameLevel((parent:GetFrameLevel() or 0) + (cfg.frameLevel or 5))
+    -- 容器现在挂在 UIParent 下，层级必须跟着单位框体算，否则会被框体压住。
+    local okLvl, wantLvl = pcall(function()
+        return (unitButton:GetFrameLevel() or 0) + (cfg.frameLevel or 5)
+    end)
+    if okLvl and type(wantLvl) == "number" then
+        pcall(container.SetFrameLevel, container, wantLvl)
+    end
 end
 
 local function CustomTuneOpts(cfg)
@@ -1236,7 +1296,11 @@ local function CreateCustomContainer(unitButton, cfg, existing)
         return nil, "empty spell list"
     end
 
-    local parent = ResolveContainerParent(unitButton, cfg)
+    --! 父级必须是 UIParent（或其它顶层可见框），不能挂在框体内部的 indicatorFrame 上。
+    --! AuraContainer 是 C 侧的新引擎，挂在单位框体这种会被 SecureGroupHeader 重排/隐藏的
+    --! 子框下面时整组不渲染，且不报任何错。HealersAuraDisplay（同一客户端上确定工作）就是
+    --! 用 UIParent 当父级 + 锚点指向框体的写法。锚定仍走 unitButton，位置一点不差。
+    local parent = UIParent
     local container = existing
     if container then
         pcall(function()
@@ -1260,30 +1324,9 @@ local function CreateCustomContainer(unitButton, cfg, existing)
     AnchorContainer(container, unitButton, cfg)
 
     if existing then
-        F.ApplyAuraGroupTuning(container, groupKey, filter, groupOpts)
+        pcall(function() F.ApplyAuraGroupTuning(container, groupKey, filter, groupOpts) end)
     else
-        local initFrame
-        if cfg.type == "color" then
-            initFrame = MakeInitColorButton(cfg, unitButton)
-        elseif cfg.type == "border" then
-            initFrame = MakeInitBorderButton(cfg, unitButton)
-        elseif cfg.type == "text" then
-            initFrame = MakeInitTextButton(cfg)
-        elseif cfg.type == "rect" then
-            initFrame = MakeInitRectButton(cfg)
-        elseif cfg.type == "bar" or cfg.type == "bars" then
-            initFrame = MakeInitBarButton(cfg)
-        elseif cfg.type == "block" or cfg.type == "blocks" then
-            initFrame = MakeInitBlockButton(cfg)
-        elseif cfg.type == "texture" then
-            initFrame = MakeInitTextureButton(cfg, unitButton)
-        elseif cfg.type == "overlay" then
-            initFrame = MakeInitOverlayButton(cfg, unitButton)
-        elseif cfg.type == "glow" then
-            initFrame = MakeInitGlowButton(cfg, unitButton)
-        else
-            initFrame = MakeInitAuraButton(cfg)
-        end
+        local initFrame = BuildInitFrame(cfg, unitButton)
         local rawInit = initFrame
         groupOpts.initializeFrame = function(button)
             if not F.InitEngineAuraButtonOnce(button) then
@@ -1303,6 +1346,13 @@ local function CreateCustomContainer(unitButton, cfg, existing)
     end
 
     AnchorContainer(container, unitButton, cfg)
+    -- Forever: the client's AuraContainer can come up disabled (EllesmereUI, the proven
+    -- on-client reference, explicitly SetEnabled(true)s every container it assigns).
+    -- Without this the group exists, matches nothing, and prints no errors -- a fully
+    -- dark indicator. Enable before binding the unit.
+    if container.SetEnabled then
+        pcall(container.SetEnabled, container, true)
+    end
     pcall(container.SetUnit, container, unit)
     if container.UpdateAllAuras then
         pcall(container.UpdateAllAuras, container)
@@ -1334,6 +1384,15 @@ local function DriveContainer(unitButton, cfg, enable)
     ApplyCustomTuning(st.container, cfg)
     AnchorContainer(st.container, unitButton, cfg)
     if enable then
+        -- match the create/park lifecycle (Quiesce disables on park): re-enable here so a
+        -- re-acquired parked container or one disabled at runtime comes back alive.
+        if st.container.SetEnabled then
+            pcall(st.container.SetEnabled, st.container, true)
+        end
+        -- parking zeroes the alpha (see QuiesceAuraContainer); a container that came back from
+        -- the pool without passing through CreateCustomContainer's re-parent branch would stay
+        -- fully transparent -- an invisible indicator with zero errors.
+        pcall(st.container.SetAlpha, st.container, 1)
         st.container:Show()
         if unit and st.boundUnit ~= unit then
             pcall(st.container.SetUnit, st.container, unit)
@@ -1345,6 +1404,10 @@ local function DriveContainer(unitButton, cfg, enable)
         HideLegacy(unitButton, cfg.indicatorName)
     else
         st.container:Hide()
+        if st.container.SetEnabled then
+            pcall(st.container.SetEnabled, st.container, false)
+        end
+        st.boundUnit = nil -- force a fresh SetUnit on the next enable (SetEnabled may unbind)
         ShowLegacy(unitButton, cfg.indicatorName)
     end
 end
@@ -1434,6 +1497,10 @@ end
 
 local EnqueueBuild
 
+-- 自绘模式开关：true = 不创建 AuraContainer，直接用普通 Frame 画（实现见文件后部）。
+local SIMPLE_MODE = true
+local SimpleSyncButton -- 前向声明：建队列时就要调用，函数体在后面
+
 local function PumpBuildQueue()
     buildTicker = nil
     local b = table.remove(buildQueue, 1)
@@ -1446,11 +1513,15 @@ local function PumpBuildQueue()
     end
     if not b then return end
 
-    local list = cachedConfigs or RefreshCachedConfigs()
-    for i = 1, #list do
-        local cfg = list[i]
-        if EnsureIndicatorContainer(b, cfg, true) then
-            DriveContainer(b, cfg, true)
+    if SIMPLE_MODE then
+        if SimpleSyncButton then SimpleSyncButton(b) end
+    else
+        local list = cachedConfigs or RefreshCachedConfigs()
+        for i = 1, #list do
+            local cfg = list[i]
+            if EnsureIndicatorContainer(b, cfg, true) then
+                DriveContainer(b, cfg, true)
+            end
         end
     end
 
@@ -1468,8 +1539,230 @@ EnqueueBuild = function(unitButton)
     end
 end
 
+--! ===========================================================================
+--! 自绘路径：引擎路线（AuraContainer）在本客户端上能建、能初始化按钮，
+--! 但自定义指示器的容器始终不出像素（尺寸/父级/锚点/裁剪/过滤器都试过）。
+--! 这里不再依赖它：用普通 Frame + 纯色纹理直接画，光环数据取自框体自己维护的
+--! _debuffs_cache / _buffs_cache —— 内置减益图标（6788 能正常显示）用的就是这份。
+--! ===========================================================================
+local simpleByButton = setmetatable({}, { __mode = "k" })
+
+local function SimplePosition(unitButton, cfg)
+    local pos = cfg.position or { "TOPRIGHT", "button", "TOPRIGHT", 0, 3 }
+    local relativeTo = unitButton
+    if pos[2] == "healthBar" and F.BD(unitButton).widgets and F.BD(unitButton).widgets.healthBar then
+        relativeTo = F.BD(unitButton).widgets.healthBar
+    end
+    local point = pos[1] or "TOPRIGHT"
+    return point, relativeTo, pos[3] or point, pos[4] or 0, pos[5] or 0
+end
+
+-- 普通 Frame 冒充引擎按钮：把只存在于 C 侧按钮上的几个方法接管成「记下对象」。
+-- 这样引擎自己的 MakeInit*Button 能照原样跑完 —— 尺寸、填充色、描边、遮罩、
+-- 扫秒动画全部由插件原有实现决定，这里一个字都不改样式。
+local function SimpleStub(frame)
+    frame.SetIcon = function(self, tex) self._simpleIcon = tex end
+    frame.GetIcon = function(self) return self._simpleIcon end
+    frame.SetApplicationCount = function(self, fs)
+        self._simpleStackFS = self._simpleStackFS or fs
+    end
+    frame.SetDurationCooldown = function(self, cd) self._simpleAnim = cd end
+    frame.SetDurationBar = function(self, bar) self._simpleAnim = bar end
+end
+
+local function SimpleEnsure(unitButton, cfg)
+    local map = simpleByButton[unitButton]
+    if not map then
+        map = {}
+        simpleByButton[unitButton] = map
+    end
+    local f = map[cfg.indicatorName]
+    if not f then
+        -- 父级用 indicatorFrame：内置减益/文字/图标都挂在这里，是本客户端上确认
+        -- 可以正常渲染的层级；锚点仍然指向单位框体，位置不受影响。
+        local parent = (F.BD(unitButton).widgets and F.BD(unitButton).widgets.indicatorFrame) or unitButton
+        f = CreateFrame("Frame", nil, parent)
+        SimpleStub(f)
+        local initFrame = BuildInitFrame(cfg, unitButton)
+        local ok = pcall(initFrame, f)
+        if not ok then
+            -- 引擎绘制没跑通时兜个纯色块，保证至少能看见，而不是静默空白。
+            local fill = f:CreateTexture(nil, "ARTWORK")
+            fill:SetAllPoints(f)
+            local r, g, b, a = GetCfgColor(cfg, { 1, 0, 0, 1 })
+            fill:SetColorTexture(r, g, b, a)
+        end
+        f:Hide()
+        map[cfg.indicatorName] = f
+    end
+
+    if IsOverlayType(cfg.type) then
+        -- 染色/边框/高光这类是整框覆盖的，锚点不由 position 决定
+        f:ClearAllPoints()
+        f:SetAllPoints(unitButton)
+    else
+        local point, relativeTo, relativePoint, x, y = SimplePosition(unitButton, cfg)
+        f:ClearAllPoints()
+        f:SetPoint(point, relativeTo, relativePoint, x, y)
+    end
+    if f.SetFrameLevel then
+        local ok, lv = pcall(function()
+            return (unitButton:GetFrameLevel() or 0) + (cfg.frameLevel or 5)
+        end)
+        if ok and type(lv) == "number" then
+            pcall(f.SetFrameLevel, f, lv)
+        end
+    end
+    return f
+end
+
+-- 在框体自己的光环缓存里找候选 spellId。缓存由 Cell 在 UNIT_AURA 时维护，
+-- 内置减益图标（能正常显示 6788）用的就是这一份数据。
+-- 本客户端的 aura 字段可能是 secret 值，直接比较会抛错，必须先判定再比较。
+local function SimpleAuraHit(aura, wanted, castBy)
+    if type(aura) ~= "table" then return nil end
+    -- 不要因为整条 aura 带 _hasSecrets 就跳过：那通常只是持续时间等字段加密，
+    -- 而 spellId 本身可读（Cell 的减益列表就是靠 spellId 匹配的）。
+    local id = aura.spellId
+    if id == nil or not F.IsValueNonSecret(id) then return nil end
+    if not wanted[id] then return nil end
+    if castBy == "me" or castBy == "others" then
+        local src = aura.sourceUnit
+        local mine
+        if src ~= nil and F.IsValueNonSecret(src) then
+            mine = (src == "player" or src == "pet")
+        end
+        -- 来源读不出来时不参与过滤：宁可多显示，也不要漏掉
+        if mine ~= nil then
+            if castBy == "me" and not mine then return nil end
+            if castBy == "others" and mine then return nil end
+        end
+    end
+    return id, aura
+end
+
+local function SimpleMatch(unitButton, cfg)
+    local bd = F.BD(unitButton)
+    local wanted = BuildSpellMap(cfg.auras)
+    local isDebuff = (cfg.auraType == "debuff")
+
+    local cache = isDebuff and bd._debuffs_cache or bd._buffs_cache
+    if type(cache) == "table" then
+        for _, aura in next, cache do
+            local id, hit = SimpleAuraHit(aura, wanted, cfg.castBy)
+            if id then return id, hit end
+        end
+    end
+
+    -- 换单位的第一帧缓存可能还没建好，直接问一次客户端兜底。
+    local unit = ResolveUnit(unitButton)
+    if type(unit) == "string" and C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+        local filter = isDebuff and "HARMFUL" or "HELPFUL"
+        for i = 1, 40 do
+            local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, filter)
+            if not ok or not aura then break end
+            local id, hit = SimpleAuraHit(aura, wanted, cfg.castBy)
+            if id then return id, hit end
+        end
+    end
+    return nil
+end
+
+-- 只负责「喂数据」：把匹配到的光环内容（图标 / 剩余时间 / 层数 / 文字）送进
+-- 引擎 init 建好的那些元素里。视觉样式一概不碰。
+local function SimpleUpdate(unitButton, cfg)
+    local f = SimpleEnsure(unitButton, cfg)
+    local t = cfg.type
+    local id, aura = SimpleMatch(unitButton, cfg)
+    if id == nil then
+        f:Hide()
+        return
+    end
+
+    if t == "icon" or t == "icons" then
+        local icon = f._simpleIcon
+        if icon and icon.SetTexture then
+            local tex = (aura and aura.icon) or GetSpellTexture(id)
+            pcall(icon.SetTexture, icon, tex or "Interface\\Icons\\INV_Misc_QuestionMark")
+        end
+    elseif t == "text" then
+        local fs = f._simpleStackFS
+        local name = aura and aura.name
+        if fs and fs.SetText and name ~= nil and F.IsValueNonSecret(name) then
+            pcall(fs.SetText, fs, name)
+        end
+        f:Show()
+        return
+    end
+
+    -- 剩余时间：方块 / 图标 / 条共用，喂给引擎建好的 cooldown 或状态条。
+    local anim = f._simpleAnim
+    if anim and aura then
+        if type(anim.SetCooldown) == "function" then
+            local exp, dur = aura.expirationTime, aura.duration
+            local okCd = false
+            if exp ~= nil and dur ~= nil then
+                okCd = pcall(anim.SetCooldown, anim, exp - dur, dur)
+            end
+            if not okCd then pcall(anim.Clear, anim) end
+        end
+    end
+
+    -- 层数
+    local stackFS = f._simpleStackFS
+    if stackFS and stackFS.SetText then
+        local n = aura and aura.applications
+        if n ~= nil and F.IsValueNonSecret(n) and n > 1 then
+            pcall(stackFS.SetText, stackFS, tostring(n))
+        else
+            pcall(stackFS.SetText, stackFS, "")
+        end
+    end
+
+    f:Show()
+end
+
+function SimpleSyncButton(unitButton)
+    local list = cachedConfigs or RefreshCachedConfigs()
+    for i = 1, #list do
+        local cfg = list[i]
+        SimpleUpdate(unitButton, cfg)
+        HideLegacy(unitButton, cfg.indicatorName)
+    end
+end
+
+local simpleDriver = CreateFrame("Frame")
+simpleDriver:RegisterEvent("UNIT_AURA")
+simpleDriver:RegisterEvent("GROUP_ROSTER_UPDATE")
+simpleDriver:RegisterEvent("PLAYER_ENTERING_WORLD")
+simpleDriver:RegisterEvent("PLAYER_REGEN_ENABLED")
+simpleDriver:SetScript("OnEvent", function(_, event, unit)
+    if not SIMPLE_MODE then return end
+    if not (cachedConfigs and #cachedConfigs > 0) then
+        cachedConfigs = nil
+        RefreshCachedConfigs()
+    end
+    local function apply()
+        if event == "UNIT_AURA" and type(unit) == "string" then
+            F.IterateAllUnitButtons(function(b)
+                if F.BD(b)._indicatorsReady and ResolveUnit(b) == unit then SimpleSyncButton(b) end
+            end, true)
+        else
+            F.IterateAllUnitButtons(function(b)
+                if F.BD(b)._indicatorsReady then SimpleSyncButton(b) end
+            end, true)
+        end
+    end
+    -- Cell 的框体缓存也在 UNIT_AURA 里刷新，延后一帧保证读到的是新数据。
+    C_Timer.After(0, apply)
+end)
+
 local function SyncButton(unitButton, allowCreate)
     if not unitButton or not F.BD(unitButton)._indicatorsReady then return end
+    if SIMPLE_MODE then
+        SimpleSyncButton(unitButton)
+        return
+    end
     -- Cache-aware like PumpBuildQueue above -- this runs once per button on
     -- every roster reshuffle, and the config only changes when the layout does.
     local list = cachedConfigs or RefreshCachedConfigs()

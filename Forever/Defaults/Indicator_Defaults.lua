@@ -319,6 +319,92 @@ function I.GetDefaultWeakenedSoulIndicator()
 end
 
 -------------------------------------------------
+-- weakened soul: seed once per layout + revision sync
+-------------------------------------------------
+-- Rules:
+--   * a layout is seeded ONCE and remembered; if the user deletes the entry afterwards it
+--     is not put back on the next update -- deleting it is their call;
+--   * a layout where the user built his own indicator tracking 6788 is left alone;
+--   * if we later change the shipped definition, the change is applied to layouts that
+--     still carry our entry only (see WS_REV below); the user's position and on/off state
+--     are never touched.
+-- `force` = manual /cell ws path: re-seeds layouts the user deleted. Returns seeded/updated.
+function F.SeedWeakenedSoul(force)
+    local WS_REV = 2
+
+    local wsdb = CellDB["weakenedSoulSeed"]
+    if type(wsdb) ~= "table" then
+        wsdb = {}
+        CellDB["weakenedSoulSeed"] = wsdb
+    end
+    if type(wsdb["seeded"]) ~= "table" then wsdb["seeded"] = {} end
+    if type(wsdb["rev"]) ~= "number" then wsdb["rev"] = 1 end
+
+    -- 9.9.10 shape: a single global flag, no per-layout record. Everything that existed back
+    -- then had been seeded, so treat the layouts present now as already seeded once.
+    if CellDB["addedWeakenedSoulIndicator"] and not wsdb["legacyMigrated"] then
+        for layoutName in pairs(CellDB["layouts"]) do
+            wsdb["seeded"][layoutName] = true
+        end
+        wsdb["legacyMigrated"] = true
+    end
+
+    local function TracksWS(ind)
+        if type(ind["auras"]) ~= "table" then return false end
+        for _, id in pairs(ind["auras"]) do
+            if id == 6788 then return true end
+        end
+        return false
+    end
+
+    -- Our block is recognised by what it holds, not by its key: the key is a plain
+    -- "indicatorN" slot shared with user-created indicators, so matching on it would mistake
+    -- a user's own indicator for ours.
+    local function IsOurWSBlock(ind)
+        if ind["type"] ~= "block" or not TracksWS(ind) then return false end
+        return ind["name"] == L["Weakened Soul"] or ind["name"] == "灵魂虚弱"
+    end
+
+    local seeded, updated = 0, 0
+    for layoutName, layout in pairs(CellDB["layouts"]) do
+        local indicators = layout["indicators"]
+        if type(indicators) == "table" and #indicators > 0 then
+            local ours, userHas = nil, false
+            for _, ind in ipairs(indicators) do
+                if IsOurWSBlock(ind) then
+                    ours = ours or ind
+                elseif TracksWS(ind) then
+                    userHas = true
+                end
+            end
+
+            if ours then
+                wsdb["seeded"][layoutName] = true
+                -- rev 2 is only the zhCN name fix ("灵魂虚弱" -> "虚弱灵魂"), kept
+                -- idempotent so an old profile gets corrected without anything else moving
+                if (tonumber(ours["_wsRev"]) or 1) < WS_REV then
+                    ours["name"] = L["Weakened Soul"]
+                    ours["_wsRev"] = WS_REV
+                    updated = updated + 1
+                end
+            elseif userHas then
+                -- configured by the user himself: hands off, but never seed on top of it
+                wsdb["seeded"][layoutName] = true
+            elseif force or not wsdb["seeded"][layoutName] then
+                local t = I.GetDefaultWeakenedSoulIndicator()
+                t["_wsRev"] = WS_REV
+                tinsert(indicators, t)
+                wsdb["seeded"][layoutName] = true
+                seeded = seeded + 1
+            end
+        end
+    end
+
+    wsdb["rev"] = WS_REV
+    return seeded, updated
+end
+
+-------------------------------------------------
 -- dispels: custom debuff type color
 -------------------------------------------------
 function I.GetDebuffTypeColor(debuffType)

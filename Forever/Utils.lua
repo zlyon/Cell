@@ -367,7 +367,7 @@ if not GetSpecializationInfoByID then
     end
 end
 
-local CELL_VERSION_FALLBACK = "r277.9.9.10-forever"
+local CELL_VERSION_FALLBACK = "r277.9.9.11-forever"
 
 function F.InitAddonVersion()
     local getMeta = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
@@ -4472,6 +4472,11 @@ function F.QuiesceAuraContainer(container)
         container:Hide()
         if container.SetUnit then
             container:SetUnit(nil)
+        end
+        -- park hygiene: a disabled container can't keep scanning while parked
+        -- (same pattern as EllesmereUI's parking path: SetEnabled(false) + SetUnit(nil))
+        if container.SetEnabled then
+            container:SetEnabled(false)
         end
         container:ClearAllPoints()
         container:SetParent(UIParent)

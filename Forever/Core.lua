@@ -1395,6 +1395,18 @@ function SlashCmdList.CELL(msg, editbox)
     elseif command == "healers" then
         F.FirstRun()
 
+    elseif command == "ws" or command == "weakenedsoul" then
+        -- manual counterpart of the per-version seeding: puts the "Weakened Soul" block back
+        -- into every layout that lost it, without waiting for an update to ship
+        local seeded, synced = F.SeedWeakenedSoul(true)
+        if seeded > 0 or synced > 0 then
+            F.Print(string.format(L["Weakened Soul indicator: seeded %d layout(s), synced %d."], seeded, synced))
+        else
+            F.Print(L["Every layout already has the Weakened Soul indicator."])
+        end
+        F.ReloadIndicatorList()
+        Cell.Fire("UpdateIndicators", Cell.vars.currentLayout)
+
     elseif command == "rescale" then
         CellDB["appearance"]["scale"] = P.GetRecommendedScale()
         ReloadUI()
